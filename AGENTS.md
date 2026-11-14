@@ -14,8 +14,10 @@ identity or terms, or bypass buyer approval.
   scoring, and future workflow transitions. Do not move this authority into an
   LLM prompt.
 - `app/persistence/` provides tenant-scoped supplier-memory, RFQ-snapshot, and
-  audit-event interfaces plus the local SQLite implementation. Keep tenant filters
-  and atomic approval semantics compatible with a future Postgres replacement.
+  audit-event interfaces plus local SQLite and explicit Postgres implementations.
+  Preserve tenant predicates, Postgres transaction-local tenant binding/RLS, and
+  atomic approval semantics across both backends. Never auto-migrate production
+  storage or silently fall back from a selected Postgres backend to SQLite.
 - `app/analysis/` compares a bid to *prior* quote history. Never add the current
   bid to its own baseline before the anomaly detector has run.
 - `app/workflow/` owns the finite-state allowlist. Approval transitions are
