@@ -23,26 +23,23 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestone — PR 3
+## Current milestone — PR 4
 
-The prototype now exposes a controlled API and buyer gate around the deterministic
-engine:
+The prototype now includes buyer-facing clients over the controlled RFQ API:
 
-- fixture JSON and optional Gemini structured quote extraction, both revalidated
-  as `NormalizedQuote` before policy code receives them;
-- fixture and optional Gemini counter-offer drafting that receives only recipient
-  context plus an anonymized target, then blocks competitor-name disclosure;
-- FastAPI routes for RFQ runs, fixture extraction, counter-offer drafts, buyer
-  approval, durable run detail, and server-sent audit events;
-- a persisted buyer-approval decision that accepts only an allowlisted local
-  prototype identity and a within-budget selected quote; and
-- a non-binding, persisted PO **draft** after approval—never an ERP write-back,
-  email, purchase, or executable purchase order.
+- a Next.js five-bid dashboard with landed-cost breakdowns, budget eligibility,
+  supplier-history anomalies, concise SSE audit facts, and a confidential
+  counter-offer drafting action;
+- an Expo mobile companion for the focused buyer approval/rejection decision;
+- buyer controls that make the draft-only boundary explicit and only enable
+  `approved_draft` through the existing API policy; and
+- a server-side development proxy so the browser uses relative `/api/rfq` calls
+  rather than reaching a sandbox or device `localhost` address.
 
 The local buyer allowlist is intentionally not production authentication. Replace
-it with verified identity/OAuth before deployment. The web/mobile buyer experience,
-real document ingestion, real vendor email, ERP execution, and deployment
-infrastructure remain intentionally out of scope for this prototype stage.
+it with verified identity/OAuth before deployment. Real document ingestion, real
+vendor email, ERP execution, and deployment infrastructure remain intentionally
+out of scope for this prototype stage.
 
 ## Architecture
 
@@ -63,6 +60,9 @@ fixture JSON or optional Gemini structured extraction
                    |
                    v
  allowlisted buyer decision -> non-binding PO draft only
+                   |
+                   v
+ Next.js buyer workspace + Expo approval companion
 ```
 
 The model is not the policy authority. The optional Gemini adapters may propose
@@ -94,6 +94,32 @@ To opt into a Gemini adapter, copy `.env.example` to `.env` and configure a loca
 `GOOGLE_API_KEY` or `GEMINI_API_KEY`; never commit either file with a real
 secret. `QUOTEHAWK_AUTHORIZED_BUYERS` is a credential-free local allowlist for
 the prototype—not a replacement for production authentication.
+
+## Buyer clients
+
+The workspace and companion are separate from the Python package so their
+JavaScript dependencies do not alter the deterministic policy environment.
+
+```bash
+# terminal one — API, with local telemetry disabled
+QUOTEHAWK_OTEL_TO_CLOUD=false uv run uvicorn app.fast_api_app:app --host 0.0.0.0 --port 8000
+
+# terminal two — Next.js buyer dashboard at http://localhost:3000
+cd web && npm install && npm run dev
+
+# optional Expo approval companion — configure a device-reachable API base first
+cd ../mobile && cp .env.example .env && npm install && npm run start
+```
+
+The Next development server proxies the dashboard's relative `/api/rfq` calls to
+FastAPI. The Expo app uses `EXPO_PUBLIC_QUOTEHAWK_API_BASE_URL`; a physical phone
+needs the computer's reachable LAN URL rather than `localhost`. See
+[`web/README.md`](web/README.md) and [`mobile/README.md`](mobile/README.md) for
+static-export and device notes.
+
+The Next visual system follows a software-page plan created with
+[Taste Skill](https://github.com/leonxlnx/taste-skill); its retained moment runtime
+has an MIT notice in `web/THIRD_PARTY_NOTICES.md`.
 
 ## agents-cli workflow
 
@@ -129,7 +155,7 @@ approval path and production persistence are implemented.
 1. **Foundation and trust boundaries** — complete.
 2. **Stateful workflow and anomalies** — complete.
 3. **Guarded Gemini negotiation + HITL API** — complete.
-4. **Buyer experience** — Next.js comparison dashboard and Expo approval view.
+4. **Buyer experience** — complete.
 5. **Evaluation, observability, deployability** — `agents-cli` datasets,
    broader adversarial simulator coverage, container hardening, and deployment enhancement.
 
@@ -148,6 +174,8 @@ app/
   persistence/sqlite.py    # supplier history, RFQ snapshots, approvals, and audit events
   simulation/              # adversarial supplier tactics
   workflow/                # finite-state RFQ orchestration
+web/                       # Next.js buyer dashboard; relative API proxy and static export
+mobile/                    # Expo buyer approval companion
 tests/unit/                # credential-free policy, API, approval, and workflow tests
 .agents-cli-spec.md        # approved product/safety specification
 agents-cli-manifest.yaml   # agents-cli scaffold metadata

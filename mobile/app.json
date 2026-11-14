@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "QuoteHawk Approval",
+    "slug": "quotehawk-approval",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": ["**/*"],
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "backgroundColor": "#0c0a08" } },
+    "web": { "bundler": "metro" }
+  }
+}

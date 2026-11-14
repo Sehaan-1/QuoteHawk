@@ -163,6 +163,12 @@ tmp*
 
 # Node
 **/node_modules
+**/.next/
+**/out/
+**/.expo/
+**/.metro-health-check*
+**/*.tsbuildinfo
+**/.taste-skill/
 npm-debug.log
 yarn-error.log
 
