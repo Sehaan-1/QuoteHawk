@@ -21,7 +21,7 @@ PERCENT = Decimal("0.0001")
 class AnomalyPolicy(BaseModel):
     """Thresholds for positive supplier deviations from rolling history."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     lookback_days: int = Field(default=180, ge=30, le=730)
     minimum_history: int = Field(default=2, ge=1, le=100)

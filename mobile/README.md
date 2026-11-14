@@ -18,6 +18,9 @@ or device. `localhost` from a phone is the phone, not the FastAPI server.
 
 The API's `QUOTEHAWK_AUTHORIZED_BUYERS` allowlist still controls the decision.
 `demo-buyer` is the local prototype default and is not production authentication.
+A future mobile release needs an HTTPS API origin and verified identity derived
+server-side; it must not rely on a client-supplied buyer ID or this allowlist.
+See [`../docs/production-integration-contracts.md`](../docs/production-integration-contracts.md).
 
 ## Check
 

@@ -23,18 +23,22 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestone — PR 4
+## Current milestone — PR 5
 
-The prototype now includes buyer-facing clients over the controlled RFQ API:
+The prototype now includes buyer-facing clients and a hardened local API boundary:
 
 - a Next.js five-bid dashboard with landed-cost breakdowns, budget eligibility,
   supplier-history anomalies, concise SSE audit facts, and a confidential
   counter-offer drafting action;
 - an Expo mobile companion for the focused buyer approval/rejection decision;
-- buyer controls that make the draft-only boundary explicit and only enable
-  `approved_draft` through the existing API policy; and
-- a server-side development proxy so the browser uses relative `/api/rfq` calls
-  rather than reaching a sandbox or device `localhost` address.
+- deterministic regressions and optional Gemini/ADK evaluation cases for supplier
+  prompt injection, malformed commercial data, confidentiality, approval bypass,
+  and draft-only execution boundaries;
+- safe local JSON observability with `X-Request-ID` request/run correlation and
+  no supplier documents, commercial values, secrets, or model reasoning in logs;
+  and
+- a non-root local runtime container, liveness endpoint, reverse-proxy contract,
+  and explicit production identity/Postgres/vendor-mail/ERP integration contracts.
 
 The local buyer allowlist is intentionally not production authentication. Replace
 it with verified identity/OAuth before deployment. Real document ingestion, real
@@ -95,6 +99,29 @@ To opt into a Gemini adapter, copy `.env.example` to `.env` and configure a loca
 secret. `QUOTEHAWK_AUTHORIZED_BUYERS` is a credential-free local allowlist for
 the prototype—not a replacement for production authentication.
 
+## Local container, logs, and runtime boundary
+
+The included Docker image is for local/integration use, not a cloud deployment.
+It runs as a non-root user, uses `/data/quotehawk.db` for its mounted local SQLite
+state, keeps cloud telemetry disabled, and offers a side-effect-free health check:
+
+```bash
+docker build -t quotehawk .
+docker run --rm -p 8080:8080 -v quotehawk-data:/data quotehawk
+curl http://localhost:8080/api/rfq/healthz
+```
+
+Every API response carries `X-Request-ID` (a safe client value is preserved or one
+is generated). Local JSON logs correlate request/run operational facts without
+recording bodies, raw supplier content, commercial values, buyer identities,
+secrets, exception text, or model reasoning. Uvicorn access logs are disabled in
+the container so they cannot become an alternate URL/query log sink.
+
+See [the runtime and production integration contracts](docs/production-integration-contracts.md)
+for the reverse-proxy/SSE behavior, production identity, Postgres replacement, and
+future vendor-mail/ERP requirements. The document is a contract only; no deploy,
+OAuth, vendor email, ERP write, or binding PO path is implemented here.
+
 ## Buyer clients
 
 The workspace and companion are separate from the Python package so their
@@ -102,7 +129,7 @@ JavaScript dependencies do not alter the deterministic policy environment.
 
 ```bash
 # terminal one — API, with local telemetry disabled
-QUOTEHAWK_OTEL_TO_CLOUD=false uv run uvicorn app.fast_api_app:app --host 0.0.0.0 --port 8000
+QUOTEHAWK_OTEL_TO_CLOUD=false uv run uvicorn app.fast_api_app:app --host 0.0.0.0 --port 8000 --no-access-log
 
 # terminal two — Next.js buyer dashboard at http://localhost:3000
 cd web && npm install && npm run dev
@@ -149,6 +176,8 @@ approval path and production persistence are implemented.
 | Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor name is blocked. |
 | Approval | Only an allowlisted buyer can decide an awaiting request, and only an eligible quote can yield a draft. |
 | Execution | No SMTP, ERP, purchase, or PO-issuance tool exists in the agent surface; an approved payload is `draft_only`. |
+| Untrusted text | Fixture/Gemini extraction treats supplier text as data, rejects unknown/malformed schema fields, and never grants document instructions policy authority. |
+| Observability | Local structured logs correlate safe request/run facts only; they exclude bodies, commercial values, credentials, error text, and model reasoning. |
 
 ## Planned PR sequence
 
@@ -156,8 +185,10 @@ approval path and production persistence are implemented.
 2. **Stateful workflow and anomalies** — complete.
 3. **Guarded Gemini negotiation + HITL API** — complete.
 4. **Buyer experience** — complete.
-5. **Evaluation, observability, deployability** — `agents-cli` datasets,
-   broader adversarial simulator coverage, container hardening, and deployment enhancement.
+5. **Evaluation, observability, deployability** — complete for the local
+   prototype: `agents-cli` safety datasets, adversarial/API regressions, safe local
+   correlation logs, container hardening, and future integration contracts. Cloud
+   deployment remains intentionally deferred.
 
 ## Project layout
 
@@ -174,7 +205,7 @@ app/
   persistence/sqlite.py    # supplier history, RFQ snapshots, approvals, and audit events
   simulation/              # adversarial supplier tactics
   workflow/                # finite-state RFQ orchestration
-web/                       # Next.js buyer dashboard; relative API proxy and static export
+web/                       # Next.js buyer dashboard; typed relative API client, proxy, static export
 mobile/                    # Expo buyer approval companion
 tests/unit/                # credential-free policy, API, approval, and workflow tests
 .agents-cli-spec.md        # approved product/safety specification

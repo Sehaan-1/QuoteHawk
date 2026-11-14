@@ -15,7 +15,7 @@ from app.negotiation.models import DraftProvider
 class CounterOfferContent(BaseModel):
     """The restricted structured output allowed from a prose provider."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     subject: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=4000)
@@ -24,7 +24,7 @@ class CounterOfferContent(BaseModel):
 class DraftContext(BaseModel):
     """Minimal, non-confidential material sent to a drafting provider."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     vendor_name: str
     requisition_id: str

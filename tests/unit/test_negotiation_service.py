@@ -35,6 +35,16 @@ class _TermLeakyDrafter:
         )
 
 
+class _ExecutionClaimingDrafter:
+    provider = DraftProvider.FIXTURE
+
+    def draft(self, context):  # type: ignore[no-untyped-def]
+        return CounterOfferContent(
+            subject="Supplier update",
+            body="This email has been sent and the purchase order was issued.",
+        )
+
+
 def test_fixture_counter_offer_is_draft_only_and_hides_competitor(requisition, tmp_path) -> None:
     memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
     RfqWorkflow(memory).run(
@@ -115,3 +125,26 @@ def test_competitor_quote_term_is_blocked_before_returning_a_draft(requisition, 
             "term-leak-run",
             NegotiationRequest(vendor_id="vendor-alpha", target_landed_cost=Decimal("1000")),
         )
+
+
+def test_provider_claiming_external_execution_is_blocked_before_returning_a_draft(
+    requisition, tmp_path
+) -> None:
+    memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
+    RfqWorkflow(memory).run(
+        requisition,
+        [make_quote(quote_id="ALPHA", vendor_name="Alpha Supply")],
+        observed_on=date(2026, 11, 14),
+        run_id="execution-claim-run",
+    )
+
+    with pytest.raises(NegotiationGuardrailError, match="external action"):
+        NegotiationService(memory, fixture_drafter=_ExecutionClaimingDrafter()).draft(
+            "execution-claim-run",
+            NegotiationRequest(vendor_id="vendor-alpha", target_landed_cost=Decimal("1000")),
+        )
+
+    assert all(
+        event.event_type != "counter_offer_drafted"
+        for event in memory.audit_events_for("execution-claim-run")
+    )
