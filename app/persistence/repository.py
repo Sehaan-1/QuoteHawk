@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any, Protocol
 
 from app.analysis.models import SupplierQuoteBaseline
+from app.approval.models import ApprovalRecord, PurchaseOrderDraft
 from app.domain.models import NormalizedQuote, SupplierBaseline, SupplierObservation
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 
@@ -53,6 +54,23 @@ class RfqRunRepository(Protocol):
         payload_patch: Mapping[str, Any] | None = None,
     ) -> RfqRun:
         """Persist one valid state transition and audit event."""
+
+    def request_buyer_approval(self, *, run_id: str, eligible_quote_ids: tuple[str, ...]) -> RfqRun:
+        """Persist an approval pause after deterministic eligibility checks."""
+
+    def complete_buyer_approval(
+        self,
+        *,
+        approval: ApprovalRecord,
+        purchase_order_draft: PurchaseOrderDraft | None,
+    ) -> RfqRun:
+        """Atomically persist a buyer decision and optional non-binding draft."""
+
+    def approval_for(self, run_id: str) -> ApprovalRecord | None:
+        """Return the persisted buyer decision, if any."""
+
+    def purchase_order_draft_for(self, run_id: str) -> PurchaseOrderDraft | None:
+        """Return the non-binding PO-draft payload, if approved."""
 
     def audit_events_for(self, run_id: str) -> tuple[RfqAuditEvent, ...]:
         """Return the ordered audit trail."""

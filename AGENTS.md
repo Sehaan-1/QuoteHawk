@@ -18,9 +18,18 @@ identity or terms, or bypass buyer approval.
   Postgres.
 - `app/analysis/` compares a bid to *prior* quote history. Never add the current
   bid to its own baseline before the anomaly detector has run.
-- `app/workflow/` owns the finite-state allowlist. PR 2 ends at
-  `negotiation_or_ready`; do not enable an approval transition until PR 3 has an
-  authenticated buyer gate.
+- `app/workflow/` owns the finite-state allowlist. Approval transitions are
+  legal only when `app/approval/` has opened the gate; never transition an RFQ to
+  `approved_draft` outside `ApprovalService`.
+- `app/approval/` verifies the local prototype buyer allowlist, insists on an
+  eligible within-budget quote, and produces a non-binding draft only. Replace
+  the allowlist with verified identity before any deployment.
+- `app/negotiation/` passes only recipient data plus an anonymized target to a
+  provider, blocks competitor names in output, and has no sending tool.
+- `app/ingestion/` validates fixture or Gemini output against `NormalizedQuote`
+  before it can reach policy code.
+- `app/api/` exposes concise audit facts over REST/SSE; never stream chain of
+  thought or raw provider reasoning.
 - `app/simulation/` generates adversarial supplier payloads. Extend it alongside
   deterministic regression tests whenever a new extraction or policy boundary is
   introduced.

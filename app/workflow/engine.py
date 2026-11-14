@@ -22,9 +22,9 @@ from app.workflow.models import RfqRunState, RfqWorkflowResult
 class RfqWorkflow:
     """Run the policy-first PR-2 path without any model or external side effect.
 
-    The database is the source of truth for every transition. A future API/ADK
-    surface can resume from the saved payload, but no code path here can issue a
-    PO or change the state to approved.
+    The database is the source of truth for every transition. The separate
+    ApprovalService is the only PR-3 path allowed to resolve an approval request
+    and create a non-binding PO draft; this engine itself has no execution power.
     """
 
     def __init__(
@@ -112,9 +112,9 @@ class RfqWorkflow:
 
             approval_ready_count = sum(score.approval_ready for score in comparison.ranked_quotes)
             reason = (
-                "At least one bid is within budget; PR 3 will expose a buyer approval gate."
+                "At least one bid is within budget; an authorized buyer may now open the approval gate."
                 if approval_ready_count
-                else "No bid is within budget; a future negotiation path is required."
+                else "No bid is within budget; a counter-offer draft may be required."
             )
             run = self.memory.advance_rfq_run(
                 run_id=run_id,

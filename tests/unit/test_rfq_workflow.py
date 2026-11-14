@@ -50,12 +50,12 @@ def test_workflow_persists_every_transition_and_anomaly(requisition, tmp_path) -
     assert snapshot["comparison"]["requisition_id"] == requisition.requisition_id
     assert snapshot["anomalies"][0]["metric"] == "freight_cost"
 
-    with pytest.raises(InvalidStateTransition, match="negotiation_or_ready to awaiting_approval"):
+    with pytest.raises(InvalidStateTransition, match="ApprovalService control path"):
         memory.advance_rfq_run(
             run_id="run-audited",
             to_state=RfqRunState.AWAITING_APPROVAL,
             event_type="approval_bypass",
-            reason="PR 2 has no buyer approval surface.",
+            reason="A generic repository transition must not open the approval gate.",
         )
 
 

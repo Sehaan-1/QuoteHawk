@@ -14,11 +14,10 @@ _ALLOWED_TRANSITIONS: dict[RfqRunState, frozenset[RfqRunState]] = {
     RfqRunState.NORMALIZED: frozenset({RfqRunState.ENRICHED_WITH_MEMORY}),
     RfqRunState.ENRICHED_WITH_MEMORY: frozenset({RfqRunState.ANALYZED}),
     RfqRunState.ANALYZED: frozenset({RfqRunState.NEGOTIATION_OR_READY}),
-    # PR 3 adds an authenticated buyer-approval transition from this state.
-    # Keeping it terminal in PR 2 prevents a repository caller from bypassing
-    # the future approval check simply by naming an approval state.
-    RfqRunState.NEGOTIATION_OR_READY: frozenset(),
-    RfqRunState.AWAITING_APPROVAL: frozenset(),
+    # PR 3 opens this path only through ApprovalService, which checks buyer
+    # allowlisting and that the selected quote is within the hard budget.
+    RfqRunState.NEGOTIATION_OR_READY: frozenset({RfqRunState.AWAITING_APPROVAL}),
+    RfqRunState.AWAITING_APPROVAL: frozenset({RfqRunState.APPROVED_DRAFT, RfqRunState.REJECTED}),
     RfqRunState.APPROVED_DRAFT: frozenset(),
     RfqRunState.REJECTED: frozenset(),
 }
