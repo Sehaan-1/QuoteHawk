@@ -1,0 +1,1 @@
+"""QuoteHawk test support package."""
