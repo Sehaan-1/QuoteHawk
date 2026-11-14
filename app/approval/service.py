@@ -16,6 +16,7 @@ from app.approval.models import (
     PurchaseOrderDraft,
     PurchaseOrderLine,
 )
+from app.auth.models import DEFAULT_TENANT_ID, AuthenticatedPrincipal, AuthMode
 from app.domain.models import NormalizedQuote, PurchaseRequisition, QuoteComparison
 from app.persistence.sqlite import SqliteSupplierMemory
 from app.workflow.models import RfqRunState
@@ -79,32 +80,58 @@ class ApprovalService:
             message="Select an eligible supplier or reject. Approval creates a non-binding draft only.",
         )
 
-    def decide(self, run_id: str, buyer_approval: BuyerApproval) -> ApprovalResult:
-        """Resolve the gate after authorization and hard-budget validation."""
+    def decide(
+        self,
+        run_id: str,
+        buyer_approval: BuyerApproval,
+        *,
+        actor: AuthenticatedPrincipal | None = None,
+    ) -> ApprovalResult:
+        """Resolve the gate after authorization and hard-budget validation.
 
-        self.policy.assert_authorized(buyer_approval.buyer_id)
+        Direct service callers retain the local allowlist compatibility path. API
+        callers provide a verified actor, so an OIDC request body cannot choose the
+        recorded approver identity or tenant.
+        """
+
+        verified_actor = actor or self._prototype_actor(buyer_approval)
+        if verified_actor.auth_mode is AuthMode.PROTOTYPE:
+            self.policy.assert_authorized(verified_actor.subject)
         run = self.memory.load_rfq_run(run_id)
+        if run.tenant_id != verified_actor.tenant_id:
+            raise PermissionError("identity is not authorized for this RFQ tenant")
         if run.state is not RfqRunState.AWAITING_APPROVAL:
             raise ApprovalError("RFQ run is not awaiting a buyer decision")
 
         now = datetime.now(UTC)
         record = ApprovalRecord(
             run_id=run_id,
-            buyer_id=buyer_approval.buyer_id,
+            buyer_id=verified_actor.subject,
+            actor_subject=verified_actor.subject,
+            actor_tenant_id=verified_actor.tenant_id,
+            authentication_method=verified_actor.auth_mode,
             decision=buyer_approval.decision,
             selected_quote_id=buyer_approval.selected_quote_id,
             note=buyer_approval.note,
             decided_at=now,
         )
         draft = (
-            self._build_draft(
-                run_id, buyer_approval.selected_quote_id, buyer_approval.buyer_id, now
-            )
+            self._build_draft(run_id, buyer_approval.selected_quote_id, verified_actor.subject, now)
             if buyer_approval.decision is ApprovalDecision.APPROVE
             else None
         )
         self.memory.complete_buyer_approval(approval=record, purchase_order_draft=draft)
         return ApprovalResult(record=record, purchase_order_draft=draft)
+
+    def _prototype_actor(self, buyer_approval: BuyerApproval) -> AuthenticatedPrincipal:
+        if buyer_approval.buyer_id is None:
+            raise ApprovalError("prototype approval requires a buyer ID")
+        return AuthenticatedPrincipal(
+            subject=buyer_approval.buyer_id,
+            tenant_id=DEFAULT_TENANT_ID,
+            auth_mode=AuthMode.PROTOTYPE,
+            roles=frozenset(),
+        )
 
     def _build_draft(
         self,

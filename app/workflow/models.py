@@ -32,6 +32,7 @@ class RfqRun(BaseModel):
 
     run_id: str = Field(min_length=1, max_length=100)
     requisition_id: str = Field(min_length=1, max_length=80)
+    tenant_id: str = Field(min_length=1, max_length=120)
     state: RfqRunState
     version: int = Field(ge=0)
     created_at: datetime

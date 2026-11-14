@@ -17,6 +17,13 @@ from pydantic import ValidationError
 from app.api.models import QuoteExtractionRequest, RfqRunDetail, RfqRunSubmission
 from app.approval.models import ApprovalRequest, ApprovalResult, BuyerApproval
 from app.approval.service import ApprovalError, ApprovalService, BuyerApprovalPolicy
+from app.auth.models import AuthenticatedPrincipal, Permission
+from app.auth.service import (
+    AuthenticationError,
+    AuthorizationError,
+    RequestAuthenticator,
+    authenticator_from_environment,
+)
 from app.domain.models import NormalizedQuote
 from app.ingestion.extractors import (
     ExtractionProvider,
@@ -46,6 +53,7 @@ def configure_quotehawk_api(
     *,
     memory: SqliteSupplierMemory | None = None,
     buyer_policy: BuyerApprovalPolicy | None = None,
+    authenticator: RequestAuthenticator | None = None,
 ) -> None:
     """Attach local services and safe local observability to a FastAPI app."""
 
@@ -53,11 +61,15 @@ def configure_quotehawk_api(
     configured_memory = memory or SqliteSupplierMemory(
         os.getenv("QUOTEHAWK_DATABASE_PATH", "quotehawk.db")
     )
+    configured_buyer_policy = buyer_policy or BuyerApprovalPolicy.from_environment()
     app.state.quotehawk_memory = configured_memory
     app.state.quotehawk_workflow = RfqWorkflow(configured_memory)
     app.state.quotehawk_approvals = ApprovalService(
         configured_memory,
-        policy=buyer_policy or BuyerApprovalPolicy.from_environment(),
+        policy=configured_buyer_policy,
+    )
+    app.state.quotehawk_authenticator = authenticator or authenticator_from_environment(
+        configured_buyer_policy.authorized_buyer_ids
     )
     app.state.quotehawk_negotiation = NegotiationService(configured_memory)
 
@@ -148,6 +160,32 @@ def _memory(request: Request) -> SqliteSupplierMemory:
     return request.app.state.quotehawk_memory
 
 
+def _principal(
+    request: Request,
+    permission: Permission,
+    *,
+    prototype_buyer_id: str | None = None,
+) -> AuthenticatedPrincipal:
+    _services(request)
+    authenticator: RequestAuthenticator = request.app.state.quotehawk_authenticator
+    principal = authenticator.authenticate(
+        request.headers.get("Authorization"),
+        prototype_buyer_id=prototype_buyer_id,
+    )
+    authenticator.require(principal, permission)
+    return principal
+
+
+def _assert_tenant_access(
+    memory: SqliteSupplierMemory,
+    run_id: str,
+    principal: AuthenticatedPrincipal,
+) -> None:
+    run = memory.load_rfq_run(run_id)
+    if run.tenant_id != principal.tenant_id:
+        raise AuthorizationError("identity is not authorized for this RFQ tenant")
+
+
 def _raise_http_error(error: Exception) -> Never:
     if isinstance(error, sqlite3.IntegrityError):
         raise HTTPException(
@@ -156,7 +194,13 @@ def _raise_http_error(error: Exception) -> Never:
         ) from error
     if isinstance(error, KeyError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    if isinstance(error, PermissionError):
+    if isinstance(error, AuthenticationError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="valid bearer authentication is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from error
+    if isinstance(error, (AuthorizationError, PermissionError)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
     if isinstance(error, (json.JSONDecodeError, ValidationError)):
         # Do not echo invalid supplier content or Pydantic's input fragments.
@@ -182,11 +226,13 @@ def create_rfq_run(submission: RfqRunSubmission, request: Request) -> RfqWorkflo
 
     workflow, _, _ = _services(request)
     try:
+        principal = _principal(request, Permission.WRITE)
         result = workflow.run(
             submission.requisition,
             submission.quotes,
             observed_on=submission.observed_on,
             run_id=submission.run_id,
+            tenant_id=principal.tenant_id,
         )
     except Exception as error:
         _raise_http_error(error)
@@ -209,6 +255,8 @@ def get_rfq_run(run_id: str, request: Request) -> RfqRunDetail:
 
     memory = _memory(request)
     try:
+        principal = _principal(request, Permission.READ)
+        _assert_tenant_access(memory, run_id, principal)
         detail = RfqRunDetail(
             run=memory.load_rfq_run(run_id),
             audit_events=memory.audit_events_for(run_id),
@@ -228,6 +276,8 @@ def stream_rfq_events(run_id: str, request: Request) -> StreamingResponse:
 
     memory = _memory(request)
     try:
+        principal = _principal(request, Permission.READ)
+        _assert_tenant_access(memory, run_id, principal)
         events = memory.audit_events_for(run_id)
         if not events and memory.load_rfq_run(run_id):
             raise KeyError(f"no audit events for RFQ run {run_id}")
@@ -249,6 +299,8 @@ def open_approval_request(run_id: str, request: Request) -> ApprovalRequest:
 
     _, approvals, _ = _services(request)
     try:
+        principal = _principal(request, Permission.APPROVE)
+        _assert_tenant_access(_memory(request), run_id, principal)
         approval_request = approvals.open_request(run_id)
     except Exception as error:
         _raise_http_error(error)
@@ -272,7 +324,13 @@ def resolve_approval(
 
     _, approvals, _ = _services(request)
     try:
-        result = approvals.decide(run_id, buyer_approval)
+        principal = _principal(
+            request,
+            Permission.APPROVE,
+            prototype_buyer_id=buyer_approval.buyer_id,
+        )
+        _assert_tenant_access(_memory(request), run_id, principal)
+        result = approvals.decide(run_id, buyer_approval, actor=principal)
     except Exception as error:
         _raise_http_error(error)
     record_event(
@@ -297,6 +355,8 @@ def draft_counter_offer(
 
     _, _, negotiation = _services(request)
     try:
+        principal = _principal(request, Permission.WRITE)
+        _assert_tenant_access(_memory(request), run_id, principal)
         draft = negotiation.draft(run_id, negotiation_request)
     except Exception as error:
         _raise_http_error(error)
@@ -315,6 +375,7 @@ def extract_quote(extraction: QuoteExtractionRequest, request: Request) -> Norma
     """Validate fixture JSON locally or opt in to Gemini structured extraction."""
 
     try:
+        _principal(request, Permission.WRITE)
         extractor = (
             FixtureQuoteExtractor()
             if extraction.provider is ExtractionProvider.FIXTURE
