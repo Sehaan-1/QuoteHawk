@@ -75,4 +75,4 @@ deprecated = "ignore"
 
 [tool.codespell]
 ignore-words-list = "rouge"
-skip = "uv.lock,.venv,**/node_modules"
+skip = "./uv.lock,./.venv/**,./**/node_modules/**,./web/.next/**,./web/out/**,./web/public/taste/**,./web/package-lock.json,./mobile/package-lock.json"

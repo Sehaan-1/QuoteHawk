@@ -30,6 +30,13 @@ identity or terms, or bypass buyer approval.
   before it can reach policy code.
 - `app/api/` exposes concise audit facts over REST/SSE; never stream chain of
   thought or raw provider reasoning.
+- `web/` is the Next.js buyer workspace. It must use relative `/api/rfq` URLs;
+  `next.config.ts` owns the server-side local proxy. Preserve the explicit
+  `draft_only` language and do not embed policy calculations in the UI.
+- `mobile/` is the Expo approval companion. It uses a device-reachable API base
+  from `EXPO_PUBLIC_QUOTEHAWK_API_BASE_URL`; it has no sending/execution screen.
+- Follow the Taste Skill plan in `web/DESIGN.md` when changing buyer-facing UI;
+  do not copy its generated cache/build artifacts into source control.
 - `app/simulation/` generates adversarial supplier payloads. Extend it alongside
   deterministic regression tests whenever a new extraction or policy boundary is
   introduced.
