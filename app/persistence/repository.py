@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Protocol
 
@@ -11,6 +12,23 @@ from app.approval.models import ApprovalRecord, PurchaseOrderDraft
 from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import NormalizedQuote, SupplierBaseline, SupplierObservation
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
+
+
+class IdempotencyConflictError(ValueError):
+    """A tenant reused an idempotency key with different immutable request input."""
+
+
+class ConcurrentRunUpdateError(RuntimeError):
+    """An optimistic RFQ transition lost a concurrent compare-and-swap race."""
+
+
+@dataclass(frozen=True)
+class RfqRunCreation:
+    """Atomic run creation result used to make request retries safe."""
+
+    run: RfqRun
+    created: bool
+    request_fingerprint: str | None
 
 
 class SupplierMemoryRepository(Protocol):
@@ -55,6 +73,25 @@ class RfqRunRepository(Protocol):
         payload: Mapping[str, Any],
     ) -> RfqRun:
         """Create an intake run."""
+
+    def create_or_retrieve_rfq_run(
+        self,
+        *,
+        run_id: str,
+        requisition_id: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        payload: Mapping[str, Any],
+        idempotency_key: str | None = None,
+        request_fingerprint: str | None = None,
+    ) -> RfqRunCreation:
+        """Create once or replay a matching tenant/key request atomically.
+
+        Implementations raise ``IdempotencyConflictError`` when the existing
+        immutable fingerprint differs from the supplied request fingerprint.
+        """
+
+    def readiness_check(self) -> None:
+        """Verify storage connectivity/schema without exposing commercial data."""
 
     def advance_rfq_run(
         self,

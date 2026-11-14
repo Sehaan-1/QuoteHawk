@@ -31,6 +31,9 @@ docker run --rm -p 8080:8080 \
   be exposed through a static host or committed to source control.
 - `GET /api/rfq/healthz` is a side-effect-free liveness endpoint used by the image
   health check. It intentionally reveals no supplier, buyer, quote, or model data.
+- `GET /api/rfq/readyz` performs a backend readiness check without loading tenant
+  data. It returns `503` when persistence is unavailable or the selected Postgres
+  schema migrations are incomplete; route it to readiness checks, not liveness.
 - SQLite is suitable for one local process. A horizontally scaled service must use
   a production repository implementation rather than sharing a SQLite file over a
   network filesystem.
@@ -127,6 +130,15 @@ The API never auto-migrates production storage and never silently falls back to
 SQLite when the Postgres backend is selected. The migration records its own version
 in `quotehawk.schema_migrations`; take a backup and use a reviewed change window
 before any future migration version.
+
+The reviewed resiliency migration
+[`../app/persistence/migrations/0002_workflow_resiliency.sql`](../app/persistence/migrations/0002_workflow_resiliency.sql)
+adds a tenant-scoped unique idempotency key and immutable request fingerprint to RFQ
+runs. The API accepts an opaque `Idempotency-Key`, derives the fingerprint from the
+validated canonical request server-side, returns an existing run only when the
+fingerprint matches, and rejects changed input with `409`; keys and fingerprints are
+never emitted to logs. `POST /api/rfq/runs/{run_id}/resume` resumes incomplete
+policy-only work from the persisted snapshot. It has no vendor-mail or ERP side effect.
 
 The schema uses Postgres `NUMERIC` for money, JSONB snapshots, tenant-inclusive
 supplier-history primary keys, composite RFQ child foreign keys, and unique run,

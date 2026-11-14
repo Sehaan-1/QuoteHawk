@@ -10,12 +10,10 @@ from typing import Any
 import pytest
 
 from app.persistence.factory import repository_from_environment
-from app.persistence.postgres import (
-    INITIAL_MIGRATION_VERSION,
-    PostgresSupplierMemory,
-    _migration_statements,
-)
+from app.persistence.postgres import _MIGRATIONS, PostgresSupplierMemory, _migration_statements
+from app.persistence.repository import ConcurrentRunUpdateError
 from app.persistence.sqlite import SqliteSupplierMemory
+from app.workflow.models import RfqRunState
 
 
 class _Cursor:
@@ -37,7 +35,7 @@ class _RecordingConnection:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[object, ...] | None]] = []
         self.closed = False
-        self.migration_applied = False
+        self.migration_versions: set[str] = set()
         self.run_row = {
             "run_id": "tenant-run",
             "requisition_id": "PR-POSTGRES",
@@ -53,10 +51,14 @@ class _RecordingConnection:
 
     def execute(self, statement: str, parameters: tuple[object, ...] | None = None) -> _Cursor:
         self.calls.append((statement, parameters))
+        if statement.strip() == "SELECT version FROM quotehawk.schema_migrations":
+            return _Cursor(rows=[{"version": version} for version in self.migration_versions])
         if "FROM quotehawk.schema_migrations" in statement:
-            return _Cursor(row={"present": 1} if self.migration_applied else None)
+            version = parameters[0] if parameters else ""
+            return _Cursor(row={"present": 1} if version in self.migration_versions else None)
         if statement.startswith("INSERT INTO quotehawk.schema_migrations"):
-            self.migration_applied = True
+            assert parameters is not None
+            self.migration_versions.add(str(parameters[0]))
         if "SELECT run_id, requisition_id, tenant_id" in statement:
             return _Cursor(row=self.run_row)
         return _Cursor()
@@ -72,9 +74,53 @@ class _ConnectionFactory:
     def __call__(self, _dsn: str) -> _RecordingConnection:
         connection = _RecordingConnection()
         if self.connections:
-            connection.migration_applied = self.connections[-1].migration_applied
+            connection.migration_versions = self.connections[-1].migration_versions.copy()
         self.connections.append(connection)
         return connection
+
+
+class _ReplayIdempotencyConnection(_RecordingConnection):
+    """Offline Postgres response for a matching existing idempotency record."""
+
+    def execute(self, statement: str, parameters: tuple[object, ...] | None = None) -> _Cursor:
+        if "SELECT run_id, request_fingerprint" in statement:
+            self.calls.append((statement, parameters))
+            return _Cursor(row={"run_id": "tenant-run", "request_fingerprint": "submission-sha-1"})
+        return super().execute(statement, parameters)
+
+
+class _ReplayIdempotencyFactory:
+    def __init__(self) -> None:
+        self.connections: list[_ReplayIdempotencyConnection] = []
+
+    def __call__(self, _dsn: str) -> _ReplayIdempotencyConnection:
+        connection = _ReplayIdempotencyConnection()
+        self.connections.append(connection)
+        return connection
+
+
+class _StaleCasConnection:
+    """Offline Postgres response for the row-lock then stale-version race."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...] | None]] = []
+        self.closed = False
+
+    def transaction(self):  # type: ignore[no-untyped-def]
+        return nullcontext()
+
+    def execute(self, statement: str, parameters: tuple[object, ...] | None = None) -> _Cursor:
+        self.calls.append((statement, parameters))
+        if "SELECT state, version, payload_json" in statement:
+            return _Cursor(row={"state": "intake", "version": 0, "payload_json": {}})
+        if "UPDATE quotehawk.rfq_runs" in statement:
+            cursor = _Cursor()
+            cursor.rowcount = 0
+            return cursor
+        return _Cursor()
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_postgres_migration_defines_tenant_foreign_keys_and_row_level_security() -> None:
@@ -113,13 +159,26 @@ def test_postgres_initialize_records_the_schema_version_only_once() -> None:
     second_statements = [statement for statement, _ in second.calls]
     assert any("CREATE TABLE IF NOT EXISTS quotehawk.rfq_runs" in item for item in first_statements)
     assert any("CREATE POLICY rfq_runs_tenant_policy" in item for item in first_statements)
-    assert any(
-        parameters == (INITIAL_MIGRATION_VERSION,)
+    inserted_versions = {
+        parameters[0]
         for statement, parameters in first.calls
-        if "INSERT INTO quotehawk.schema_migrations" in statement
-    )
+        if "INSERT INTO quotehawk.schema_migrations" in statement and parameters is not None
+    }
+    assert inserted_versions == {version for version, _ in _MIGRATIONS}
     assert not any("CREATE POLICY" in item for item in second_statements)
     assert first.closed and second.closed
+
+
+def test_postgres_readiness_requires_all_reviewed_migrations() -> None:
+    factory = _ConnectionFactory()
+    repository = PostgresSupplierMemory(
+        "postgresql://offline/quotehawk", connection_factory=factory
+    )
+
+    with pytest.raises(RuntimeError, match="migration is incomplete"):
+        repository.readiness_check()
+    repository.initialize()
+    repository.readiness_check()
 
 
 def test_postgres_load_binds_the_tenant_before_a_tenant_predicate_query() -> None:
@@ -142,6 +201,56 @@ def test_postgres_load_binds_the_tenant_before_a_tenant_predicate_query() -> Non
     assert connection.closed
 
 
+def test_postgres_idempotency_replay_is_tenant_scoped_and_uses_matching_fingerprint() -> None:
+    factory = _ReplayIdempotencyFactory()
+    repository = PostgresSupplierMemory(
+        "postgresql://offline/quotehawk", connection_factory=factory
+    )
+
+    replay = repository.create_or_retrieve_rfq_run(
+        run_id="new-client-run",
+        requisition_id="PR-POSTGRES",
+        tenant_id="tenant-acme",
+        payload={"safe": "snapshot"},
+        idempotency_key="postgres-idempotency-key-0001",
+        request_fingerprint="submission-sha-1",
+    )
+
+    assert replay.created is False
+    assert replay.run.run_id == "tenant-run"
+    creation_connection = factory.connections[0]
+    statements = [statement for statement, _ in creation_connection.calls]
+    assert any("ON CONFLICT (tenant_id, idempotency_key)" in statement for statement in statements)
+    lookup = next(
+        parameters
+        for statement, parameters in creation_connection.calls
+        if "SELECT run_id, request_fingerprint" in statement
+    )
+    assert lookup == ("tenant-acme", "postgres-idempotency-key-0001")
+
+
+def test_postgres_stale_compare_and_swap_raises_without_a_duplicate_event() -> None:
+    connection = _StaleCasConnection()
+    repository = PostgresSupplierMemory(
+        "postgresql://offline/quotehawk", connection_factory=lambda _dsn: connection
+    )
+
+    with pytest.raises(ConcurrentRunUpdateError, match="changed concurrently"):
+        repository.advance_rfq_run(
+            run_id="tenant-run",
+            tenant_id="tenant-acme",
+            to_state=RfqRunState.NORMALIZED,
+            event_type="quotes_normalized",
+            reason="worker observed a stale version",
+        )
+
+    statements = [statement for statement, _ in connection.calls]
+    assert any("FOR UPDATE" in statement for statement in statements)
+    assert any("AND version = %s" in statement for statement in statements)
+    assert not any("INSERT INTO quotehawk.rfq_run_events" in statement for statement in statements)
+    assert connection.closed
+
+
 def test_persistence_factory_requires_a_dsn_and_preserves_explicit_sqlite_mode(
     monkeypatch, tmp_path
 ) -> None:
@@ -156,6 +265,15 @@ def test_persistence_factory_requires_a_dsn_and_preserves_explicit_sqlite_mode(
     monkeypatch.setenv("QUOTEHAWK_PERSISTENCE_BACKEND", "sqlite")
     monkeypatch.setenv("QUOTEHAWK_DATABASE_PATH", str(tmp_path / "quotehawk.sqlite3"))
     assert isinstance(repository_from_environment(), SqliteSupplierMemory)
+
+
+def test_postgres_resiliency_migration_has_tenant_scoped_idempotency() -> None:
+    migration = Path("app/persistence/migrations/0002_workflow_resiliency.sql").read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS idempotency_key" in migration
+    assert "ADD COLUMN IF NOT EXISTS request_fingerprint" in migration
+    assert "ON quotehawk.rfq_runs (tenant_id, idempotency_key)" in migration
+    assert _MIGRATIONS[-1][0] == "0002_workflow_resiliency"
 
 
 def test_migration_parser_retains_the_reviewed_policy_statements() -> None:

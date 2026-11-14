@@ -140,6 +140,45 @@ def test_api_structured_event_correlates_request_and_run_without_commercial_payl
     assert "Alpha Industrial Supply" not in json.dumps(run_event)
 
 
+def test_api_idempotency_key_replays_or_rejects_changed_input(requisition, tmp_path) -> None:
+    client = _client(tmp_path)
+    submission = _submission(requisition, run_id="idempotency-first-run")
+    headers = {"Idempotency-Key": "api-idempotency-key-0001"}
+
+    created = client.post("/api/rfq/runs", json=submission, headers=headers)
+    replay = client.post("/api/rfq/runs", json=submission, headers=headers)
+    changed_submission = _submission(requisition, run_id="idempotency-other-run")
+    changed_submission["quotes"] = [make_quote(quote_id="API-CHANGED").model_dump(mode="json")]
+    conflict = client.post("/api/rfq/runs", json=changed_submission, headers=headers)
+    malformed_key = client.post(
+        "/api/rfq/runs",
+        json=_submission(requisition, run_id="invalid-key-run"),
+        headers={"Idempotency-Key": "short"},
+    )
+
+    assert created.status_code == 201
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+    assert replay.json()["run"]["run_id"] == "idempotency-first-run"
+    assert conflict.status_code == 409
+    assert "different RFQ submission" in conflict.json()["detail"]
+    assert malformed_key.status_code == 400
+    assert "Idempotency-Key" in malformed_key.json()["detail"]
+
+
+def test_api_readiness_and_resume_controls(requisition, tmp_path) -> None:
+    client = _client(tmp_path)
+    created = client.post("/api/rfq/runs", json=_submission(requisition, run_id="resume-api-run"))
+    resumed = client.post("/api/rfq/runs/resume-api-run/resume")
+    ready = client.get("/api/rfq/readyz")
+
+    assert created.status_code == 201
+    assert resumed.status_code == 200
+    assert resumed.json()["run"]["state"] == "negotiation_or_ready"
+    assert ready.status_code == 200
+    assert ready.json() == {"status": "ready", "execution_boundary": "draft_only"}
+
+
 def test_api_runs_workflow_streams_audit_and_creates_a_draft(requisition, tmp_path) -> None:
     client = _client(tmp_path)
     submission = _submission(requisition, run_id="api-run")

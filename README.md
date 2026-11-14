@@ -136,7 +136,20 @@ state, keeps cloud telemetry disabled, and offers a side-effect-free health chec
 docker build -t quotehawk .
 docker run --rm -p 8080:8080 -v quotehawk-data:/data quotehawk
 curl http://localhost:8080/api/rfq/healthz
+curl http://localhost:8080/api/rfq/readyz
 ```
+
+`GET /api/rfq/healthz` is liveness-only. `GET /api/rfq/readyz` checks the selected
+persistence backend without returning tenant or commercial data; it returns `503`
+until an explicitly selected Postgres backend has its reviewed migrations applied.
+
+`POST /api/rfq/runs` accepts an optional opaque `Idempotency-Key` header (8–128
+letters, digits, `.`, `_`, `:`, or `-`). QuoteHawk hashes a canonical server-side
+representation of the validated submission. Repeating the same key and input
+returns the persisted run with `200` and `idempotent_replay: true`; reusing that
+key for different validated input returns `409`. `POST /api/rfq/runs/{run_id}/resume`
+continues only incomplete deterministic transitions from the durable snapshot. Both
+controls remain draft-only and never transmit vendor messages or create a binding PO.
 
 Every API response carries `X-Request-ID` (a safe client value is preserved or one
 is generated). Local JSON logs correlate request/run operational facts without
@@ -223,6 +236,10 @@ are explicitly approved.
 7. **Postgres persistence path** — complete: an explicit Postgres repository,
    versioned schema migration, tenant RLS, transaction-local tenant binding, and
    contract tests. Database provisioning and deployment remain deferred.
+8. **Workflow resiliency** — complete: tenant-scoped idempotency keys, immutable
+   request fingerprints, deterministic resume/recovery, backend readiness checks,
+   and SQLite/Postgres optimistic-concurrency regressions. The draft-only boundary
+   remains unchanged.
 
 ## Project layout
 
