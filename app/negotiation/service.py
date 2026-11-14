@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import NormalizedQuote, QuoteComparison
 from app.negotiation.drafters import (
     CounterOfferContent,
@@ -15,7 +16,7 @@ from app.negotiation.drafters import (
     GeminiCounterOfferDrafter,
 )
 from app.negotiation.models import CounterOfferDraft, DraftProvider, NegotiationRequest
-from app.persistence.sqlite import SqliteSupplierMemory
+from app.persistence.repository import QuoteHawkRepository
 from app.workflow.models import RfqRunState
 
 _EXECUTION_CLAIM_PATTERNS = (
@@ -37,7 +38,7 @@ class NegotiationService:
 
     def __init__(
         self,
-        memory: SqliteSupplierMemory,
+        memory: QuoteHawkRepository,
         *,
         fixture_drafter: CounterOfferDrafter | None = None,
         gemini_drafter: CounterOfferDrafter | None = None,
@@ -46,16 +47,22 @@ class NegotiationService:
         self.fixture_drafter = fixture_drafter or FixtureCounterOfferDrafter()
         self.gemini_drafter = gemini_drafter
 
-    def draft(self, run_id: str, request: NegotiationRequest) -> CounterOfferDraft:
+    def draft(
+        self,
+        run_id: str,
+        request: NegotiationRequest,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> CounterOfferDraft:
         """Build a counter-offer only for a completed, non-approved RFQ run."""
 
-        run = self.memory.load_rfq_run(run_id)
+        run = self.memory.load_rfq_run(run_id, tenant_id=tenant_id)
         if run.state is not RfqRunState.NEGOTIATION_OR_READY:
             raise NegotiationGuardrailError(
                 "counter-offers can only be drafted before the buyer approval gate opens"
             )
 
-        payload = self.memory.payload_for(run_id)
+        payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
         quotes = tuple(NormalizedQuote.model_validate(item) for item in payload["quotes"])
         current_quote = next(
             (quote for quote in quotes if quote.vendor_id == request.vendor_id), None
@@ -104,6 +111,7 @@ class NegotiationService:
             run_id=run_id,
             event_type="counter_offer_drafted",
             reason="A confidentiality-checked counter-offer draft was prepared for buyer review.",
+            tenant_id=tenant_id,
             details={
                 "vendor_id": current_quote.vendor_id,
                 "provider": request.provider.value,

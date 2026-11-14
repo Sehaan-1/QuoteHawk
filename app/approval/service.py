@@ -18,7 +18,7 @@ from app.approval.models import (
 )
 from app.auth.models import DEFAULT_TENANT_ID, AuthenticatedPrincipal, AuthMode
 from app.domain.models import NormalizedQuote, PurchaseRequisition, QuoteComparison
-from app.persistence.sqlite import SqliteSupplierMemory
+from app.persistence.repository import QuoteHawkRepository
 from app.workflow.models import RfqRunState
 
 
@@ -52,20 +52,20 @@ class ApprovalService:
 
     def __init__(
         self,
-        memory: SqliteSupplierMemory,
+        memory: QuoteHawkRepository,
         *,
         policy: BuyerApprovalPolicy | None = None,
     ) -> None:
         self.memory = memory
         self.policy = policy or BuyerApprovalPolicy.from_environment()
 
-    def open_request(self, run_id: str) -> ApprovalRequest:
+    def open_request(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> ApprovalRequest:
         """Pause an approval-ready RFQ and return the safe buyer-card payload."""
 
-        run = self.memory.load_rfq_run(run_id)
+        run = self.memory.load_rfq_run(run_id, tenant_id=tenant_id)
         if run.state is not RfqRunState.NEGOTIATION_OR_READY:
             raise ApprovalError("RFQ run is not ready to request buyer approval")
-        comparison = self._comparison(run_id)
+        comparison = self._comparison(run_id, tenant_id=tenant_id)
         eligible_quotes = tuple(score for score in comparison.ranked_quotes if score.approval_ready)
         if not eligible_quotes:
             raise ApprovalError("no within-budget quote is eligible for buyer approval")
@@ -73,6 +73,7 @@ class ApprovalService:
         run = self.memory.request_buyer_approval(
             run_id=run_id,
             eligible_quote_ids=tuple(score.quote_id for score in eligible_quotes),
+            tenant_id=tenant_id,
         )
         return ApprovalRequest(
             run=run,
@@ -97,9 +98,10 @@ class ApprovalService:
         verified_actor = actor or self._prototype_actor(buyer_approval)
         if verified_actor.auth_mode is AuthMode.PROTOTYPE:
             self.policy.assert_authorized(verified_actor.subject)
-        run = self.memory.load_rfq_run(run_id)
-        if run.tenant_id != verified_actor.tenant_id:
-            raise PermissionError("identity is not authorized for this RFQ tenant")
+        try:
+            run = self.memory.load_rfq_run(run_id, tenant_id=verified_actor.tenant_id)
+        except KeyError as error:
+            raise PermissionError("identity is not authorized for this RFQ tenant") from error
         if run.state is not RfqRunState.AWAITING_APPROVAL:
             raise ApprovalError("RFQ run is not awaiting a buyer decision")
 
@@ -116,7 +118,13 @@ class ApprovalService:
             decided_at=now,
         )
         draft = (
-            self._build_draft(run_id, buyer_approval.selected_quote_id, verified_actor.subject, now)
+            self._build_draft(
+                run_id,
+                buyer_approval.selected_quote_id,
+                verified_actor.subject,
+                now,
+                tenant_id=verified_actor.tenant_id,
+            )
             if buyer_approval.decision is ApprovalDecision.APPROVE
             else None
         )
@@ -139,10 +147,12 @@ class ApprovalService:
         selected_quote_id: str | None,
         buyer_id: str,
         created_at: datetime,
+        *,
+        tenant_id: str,
     ) -> PurchaseOrderDraft:
         if selected_quote_id is None:  # Protected by BuyerApproval validation.
             raise ApprovalError("approval requires a selected quote")
-        comparison = self._comparison(run_id)
+        comparison = self._comparison(run_id, tenant_id=tenant_id)
         score = next(
             (
                 candidate
@@ -156,7 +166,7 @@ class ApprovalService:
         if not score.approval_ready:
             raise ApprovalError("selected quote exceeds the hard landed-cost budget")
 
-        payload = self.memory.payload_for(run_id)
+        payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
         requisition = PurchaseRequisition.model_validate(payload["requisition"])
         quote = next(
             (
@@ -192,8 +202,8 @@ class ApprovalService:
             created_at=created_at,
         )
 
-    def _comparison(self, run_id: str) -> QuoteComparison:
-        payload = self.memory.payload_for(run_id)
+    def _comparison(self, run_id: str, *, tenant_id: str) -> QuoteComparison:
+        payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
         if "comparison" not in payload:
             raise ApprovalError("RFQ run has no completed comparison to approve")
         return QuoteComparison.model_validate(payload["comparison"])

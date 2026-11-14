@@ -23,10 +23,10 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestone — PR 6
+## Current milestone — PR 7
 
-The prototype now adds production-oriented API identity boundaries while retaining
-a credential-free local demo path:
+The prototype now adds a production-oriented Postgres persistence path while
+retaining credential-free SQLite demos and the earlier API identity boundaries:
 
 - a Next.js five-bid dashboard with landed-cost breakdowns, budget eligibility,
   supplier-history anomalies, concise SSE audit facts, and a confidential
@@ -38,7 +38,10 @@ a credential-free local demo path:
   no supplier documents, commercial values, secrets, or model reasoning in logs;
 - strict OIDC bearer-JWT verification with server-derived subject, tenant, and
   role authorization; tenant-scoped RFQ and supplier-memory data; and immutable
-  approval actor fields; and
+  approval actor fields;
+- an explicit Postgres repository with reviewed migration SQL, forced row-level
+  tenant security, transaction-local tenant binding, and atomic workflow/approval
+  writes, without a silent SQLite fallback; and
 - a non-root local runtime container, liveness endpoint, reverse-proxy contract,
   and explicit production identity/Postgres/vendor-mail/ERP integration contracts.
 
@@ -58,7 +61,7 @@ fixture JSON or optional Gemini structured extraction
        strict Pydantic NormalizedQuote
                    |
                    v
- deterministic pricing + budget policy  <--- SQLite supplier/quote history
+ deterministic pricing + budget policy  <--- SQLite demo / tenant-scoped Postgres history
                    |
                    v
  persisted RFQ state + concise SSE audit events + anomaly analysis
@@ -105,6 +108,24 @@ secret. `QUOTEHAWK_AUTHORIZED_BUYERS` is used only by the credential-free
 and the required issuer, audience, JWKS URL, tenant claim, and roles described in
 [the identity and tenancy guide](docs/identity-and-tenancy.md).
 
+## Postgres persistence path
+
+SQLite remains the zero-credential local default. The optional Postgres repository
+is a reviewed integration path, not a cloud deployment. A deployment owner must
+first apply the versioned schema and then explicitly select Postgres; the API never
+runs migrations automatically or falls back to SQLite:
+
+```bash
+export QUOTEHAWK_POSTGRES_DSN='postgresql://quotehawk_app:...@db.example.com/quotehawk?sslmode=require'
+uv run python -m app.persistence.postgres --dsn "$QUOTEHAWK_POSTGRES_DSN"
+export QUOTEHAWK_PERSISTENCE_BACKEND=postgres
+```
+
+The schema uses `NUMERIC`, JSONB snapshots, atomic versioned RFQ transitions, and
+forced tenant row-level security. Keep the DSN in a secret manager and follow the
+[Postgres migration contract](docs/production-integration-contracts.md#postgres-repository-and-migration-contract)
+before any production proposal.
+
 ## Local container, logs, and runtime boundary
 
 The included Docker image is for local/integration use, not a cloud deployment.
@@ -124,7 +145,7 @@ secrets, exception text, or model reasoning. Uvicorn access logs are disabled in
 the container so they cannot become an alternate URL/query log sink.
 
 See [the runtime and production integration contracts](docs/production-integration-contracts.md)
-for the reverse-proxy/SSE behavior, production identity, Postgres replacement, and
+for the reverse-proxy/SSE behavior, production identity, Postgres migration path, and
 future vendor-mail/ERP requirements. The document is a contract only; no deploy,
 OAuth, vendor email, ERP write, or binding PO path is implemented here.
 
@@ -168,8 +189,9 @@ agents-cli scaffold enhance . --deployment-target cloud_run
 ```
 
 The project uses a **prototype-first** posture. It contains no Terraform, CI/CD,
-or cloud resource assumptions yet. Do not deploy it until a buyer-authenticated
-approval path and production persistence are implemented.
+or cloud resource assumptions yet. Do not deploy it until an identity-provider,
+Postgres operations, proxy controls, threat model, and production readiness review
+are explicitly approved.
 
 ## Guardrails
 
@@ -178,7 +200,7 @@ approval path and production persistence are implemented.
 | Budget | A quote over `max_landed_cost` remains visible but is never approval-ready. |
 | Currency | This prototype rejects currency mismatches; it does not guess FX rates. |
 | Fees | Freight and duties must be present explicitly, even when zero. |
-| Precision | All money uses `Decimal`; SQLite stores canonical decimal text. |
+| Precision | All money uses `Decimal`; SQLite stores canonical decimal text and Postgres stores `NUMERIC`. |
 | Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor name is blocked. |
 | Approval | In OIDC mode, only a verified token subject with the configured approver role and matching tenant can decide an awaiting request; only an eligible quote can yield a draft. The allowlist is local-prototype fallback only. |
 | Execution | No SMTP, ERP, purchase, or PO-issuance tool exists in the agent surface; an approved payload is `draft_only`. |
@@ -194,10 +216,13 @@ approval path and production persistence are implemented.
 5. **Evaluation, observability, deployability** — complete for the local
    prototype: `agents-cli` safety datasets, adversarial/API regressions, safe local
    correlation logs, container hardening, and future integration contracts.
-6. **Production identity and tenant authorization** — OIDC JWT verification,
-   role-gated API capabilities, server-derived approval actors, and tenant-scoped
-   local persistence. Identity-provider provisioning and cloud deployment remain
-   intentionally deferred.
+6. **Production identity and tenant authorization** — complete: OIDC JWT
+   verification, role-gated API capabilities, server-derived approval actors, and
+   tenant-scoped persistence semantics. Identity-provider provisioning remains
+   deferred.
+7. **Postgres persistence path** — complete: an explicit Postgres repository,
+   versioned schema migration, tenant RLS, transaction-local tenant binding, and
+   contract tests. Database provisioning and deployment remain deferred.
 
 ## Project layout
 
@@ -211,7 +236,7 @@ app/
   ingestion/               # fixture and optional Gemini structured extraction
   negotiation/             # confidential fixture/Gemini counter-offer drafts
   policies/pricing.py      # deterministic landed-cost and ranking policy
-  persistence/sqlite.py    # supplier history, RFQ snapshots, approvals, and audit events
+  persistence/             # SQLite demo backend, Postgres repository, and reviewed migrations
   simulation/              # adversarial supplier tactics
   workflow/                # finite-state RFQ orchestration
 web/                       # Next.js buyer dashboard; typed relative API client, proxy, static export
