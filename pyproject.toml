@@ -64,11 +64,11 @@ python-version = "3.11"
 [tool.ty.src]
 exclude = [".venv/**"]
 [tool.ty.rules]
-unresolved-import = "ignore"
-unresolved-attribute = "ignore"
+import-not-found = "ignore"
+missing-attribute = "ignore"
 invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
-invalid-return-type = "ignore"
+invalid-explicit-return = "ignore"
 possibly-missing-attribute = "ignore"
 not-subscriptable = "ignore"
 deprecated = "ignore"

@@ -23,24 +23,26 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestone — PR 1
+## Current milestone — PR 2
 
-This foundation ships the deterministic trust boundary:
+The deterministic engine now has a durable, explicit RFQ workflow:
 
-- `PurchaseRequisition`, `NormalizedQuote`, landed-cost, score, and supplier
-  memory schemas;
+- `PurchaseRequisition`, `NormalizedQuote`, landed-cost, score, supplier-memory,
+  anomaly, workflow-state, and audit-event contracts;
 - deterministic landed-cost calculation for freight, duties, lead-time delay,
   MOQ, payment-term financing, quality penalty, and explicit early-pay discount;
 - a configurable, explained one-to-five-bid weighted comparison;
-- local SQLite supplier-history repository with exact-decimal baselines;
-- a generated Google ADK entry point with a deliberately read-only guardrail
-  tool; and
-- credential-free adversarial pytest coverage.
+- local SQLite quote history with six-month rolling supplier baselines;
+- persisted RFQ run snapshots and an immutable, ordered audit-event trail for
+  `intake -> normalized -> enriched_with_memory -> analyzed -> negotiation_or_ready`;
+- deterministic price, freight, and lead-time anomaly detection; and
+- credential-free adversarial supplier tactics for hidden fees, underfilled
+  quantities, freight spikes, and over-budget bids.
 
-Not in this PR: PDF/CSV/email extraction, anomaly detection, negotiation,
-persisted workflow states, SSE, the buyer UI, Expo companion, real email/ERP
-integrations, or deployment infrastructure. Those are intentionally sequenced in
-[the approved agent spec](.agents-cli-spec.md).
+Not in this PR: PDF/CSV/email extraction, Gemini drafting, negotiation messages,
+SSE, buyer approval, PO drafts, the web/mobile UI, real email/ERP integrations,
+or deployment infrastructure. Those are intentionally sequenced in [the approved
+agent spec](.agents-cli-spec.md).
 
 ## Architecture
 
@@ -51,10 +53,13 @@ untrusted quote input / future Gemini extraction
        strict Pydantic NormalizedQuote
                    |
                    v
- deterministic pricing + budget policy  <--- SQLite supplier memory
+ deterministic pricing + budget policy  <--- SQLite supplier/quote history
                    |
                    v
- explainable comparison matrix (no execution authority)
+ persisted RFQ state + concise audit events + anomaly analysis
+                   |
+                   v
+ negotiation-or-ready state (no execution authority)
                    |
                    v
  future explicit HITL approval -> PO draft only
@@ -119,14 +124,13 @@ approval path and production persistence are implemented.
 
 ## Planned PR sequence
 
-1. **Foundation and trust boundaries** — this PR.
-2. **Stateful workflow and anomalies** — persistent runs/audit events, supplier
-   baselines, and anomaly detector.
+1. **Foundation and trust boundaries** — complete.
+2. **Stateful workflow and anomalies** — complete.
 3. **Guarded Gemini negotiation + HITL API** — typed model adapter, FastAPI/SSE,
    and approval/PO-draft gate.
 4. **Buyer experience** — Next.js comparison dashboard and Expo approval view.
 5. **Evaluation, observability, deployability** — `agents-cli` datasets,
-   adversarial simulator, container hardening, and deployment enhancement.
+   broader adversarial simulator coverage, container hardening, and deployment enhancement.
 
 ## Project layout
 
@@ -134,9 +138,12 @@ approval path and production persistence are implemented.
 app/
   agent.py                 # agents-cli scaffolded ADK boundary
   domain/models.py         # strict procurement contracts
+  analysis/                # rolling baselines and deterministic anomaly detector
   policies/pricing.py      # deterministic landed-cost and ranking policy
-  persistence/sqlite.py    # durable local supplier memory
-tests/unit/                # credential-free adversarial tests
+  persistence/sqlite.py    # supplier history, RFQ snapshots, and audit events
+  simulation/              # adversarial supplier tactics
+  workflow/                # finite-state RFQ orchestration
+tests/unit/                # credential-free adversarial and workflow tests
 .agents-cli-spec.md        # approved product/safety specification
 agents-cli-manifest.yaml   # agents-cli scaffold metadata
 ```
