@@ -13,17 +13,21 @@ identity or terms, or bypass buyer approval.
 - `app/policies/` is deterministic policy authority for cost math, budget rules,
   scoring, and future workflow transitions. Do not move this authority into an
   LLM prompt.
-- `app/persistence/` provides supplier-memory, RFQ-snapshot, and audit-event
-  interfaces plus the local SQLite implementation. Keep it replaceable by
-  Postgres.
+- `app/persistence/` provides tenant-scoped supplier-memory, RFQ-snapshot, and
+  audit-event interfaces plus the local SQLite implementation. Keep tenant filters
+  and atomic approval semantics compatible with a future Postgres replacement.
 - `app/analysis/` compares a bid to *prior* quote history. Never add the current
   bid to its own baseline before the anomaly detector has run.
 - `app/workflow/` owns the finite-state allowlist. Approval transitions are
   legal only when `app/approval/` has opened the gate; never transition an RFQ to
   `approved_draft` outside `ApprovalService`.
-- `app/approval/` verifies the local prototype buyer allowlist, insists on an
-  eligible within-budget quote, and produces a non-binding draft only. Replace
-  the allowlist with verified identity before any deployment.
+- `app/auth/` is the API identity boundary. In `oidc` mode it verifies an
+  asymmetric bearer JWT, derives subject/tenant/roles from signed claims, and
+  enforces read/write/approve capabilities. Never trust a body `buyer_id`, UI
+  state, or an unsigned header as an OIDC identity source.
+- `app/approval/` receives the verified actor from the API, insists on a matching
+  tenant and eligible within-budget quote, and produces a non-binding draft only.
+  The allowlist exists solely for the explicit local `prototype` fallback.
 - `app/negotiation/` passes only recipient data plus an anonymized target to a
   provider, blocks competitor names in output, and has no sending tool.
 - `app/ingestion/` validates fixture or Gemini output against `NormalizedQuote`

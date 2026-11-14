@@ -41,8 +41,13 @@ browser URL with `localhost`, a private container host, or a Gemini/ERP/vendor
 endpoint.
 
 See [`../docs/production-integration-contracts.md`](../docs/production-integration-contracts.md)
-for the full reverse-proxy and future identity contract. Static hosting does not
-make the local buyer allowlist production authentication.
+and [`../docs/identity-and-tenancy.md`](../docs/identity-and-tenancy.md) for the
+reverse-proxy and OIDC contract. In `oidc` mode, every RFQ route except `healthz`
+(including the SSE events route) needs `Authorization: Bearer <verified access
+JWT>` forwarded unchanged to FastAPI. Static hosting does not make the local buyer
+allowlist production authentication, and this static export does not host an OAuth
+login or store a bearer token. A future web identity design must acquire the token
+through a reviewed flow and attach it in a same-origin/proxy-safe way.
 
 ## Checks
 

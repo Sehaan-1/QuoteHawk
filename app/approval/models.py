@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.auth.models import AuthMode
 from app.domain.models import QuoteScore
 from app.workflow.models import RfqRun
 
@@ -25,7 +26,9 @@ class BuyerApproval(BaseModel):
 
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
-    buyer_id: str = Field(min_length=3, max_length=160)
+    # Deprecated local-prototype input. In OIDC mode it is ignored; the server
+    # records the verified token subject instead.
+    buyer_id: str | None = Field(default=None, min_length=3, max_length=160)
     decision: ApprovalDecision
     selected_quote_id: str | None = Field(default=None, min_length=1, max_length=100)
     note: str | None = Field(default=None, max_length=500)
@@ -55,11 +58,24 @@ class ApprovalRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: str
+    # buyer_id remains the stable display/key field; it is always actor_subject
+    # once the API supplies a verified principal.
     buyer_id: str
+    actor_subject: str = Field(min_length=1, max_length=255)
+    actor_tenant_id: str = Field(min_length=1, max_length=120)
+    authentication_method: AuthMode
     decision: ApprovalDecision
     selected_quote_id: str | None = None
     note: str | None = None
     decided_at: datetime
+
+    @model_validator(mode="after")
+    def require_server_actor_display_consistency(self) -> ApprovalRecord:
+        """Prevent a durable record from presenting a different buyer than its actor."""
+
+        if self.buyer_id != self.actor_subject:
+            raise ValueError("approval buyer_id must match the authenticated actor subject")
+        return self
 
 
 class PurchaseOrderLine(BaseModel):

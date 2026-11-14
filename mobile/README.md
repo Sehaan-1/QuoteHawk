@@ -18,9 +18,14 @@ or device. `localhost` from a phone is the phone, not the FastAPI server.
 
 The API's `QUOTEHAWK_AUTHORIZED_BUYERS` allowlist still controls the decision.
 `demo-buyer` is the local prototype default and is not production authentication.
-A future mobile release needs an HTTPS API origin and verified identity derived
-server-side; it must not rely on a client-supplied buyer ID or this allowlist.
-See [`../docs/production-integration-contracts.md`](../docs/production-integration-contracts.md).
+An OIDC-configured API now derives the buyer from a verified bearer JWT and
+ignores the body buyer ID. In that mode every RFQ call except `healthz`, including
+the events stream, must carry `Authorization: Bearer <verified access JWT>`. This
+Expo prototype does not implement OAuth login or store tokens; a future mobile
+release needs a reviewed native identity flow and an HTTPS API origin. It must not
+rely on this allowlist. See
+[`../docs/identity-and-tenancy.md`](../docs/identity-and-tenancy.md) and
+[`../docs/production-integration-contracts.md`](../docs/production-integration-contracts.md).
 
 ## Check
 
