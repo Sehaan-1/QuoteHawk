@@ -22,12 +22,16 @@ from fastapi import FastAPI
 from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.runners import Runner
 
+from app.api.routes import configure_quotehawk_api
+from app.api.routes import router as quotehawk_router
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
 
 load_dotenv()
 allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
-otel_to_cloud = True
+# Local fixture/API paths must work without Application Default Credentials.
+# Cloud telemetry remains an explicit deployment-time opt-in.
+otel_to_cloud = os.getenv("QUOTEHAWK_OTEL_TO_CLOUD", "false").lower() == "true"
 
 AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -65,7 +69,9 @@ app: FastAPI = get_fast_api_app(
     lifespan=lifespan,
 )
 app.title = "quotehawk"
-app.description = "API for interacting with the Agent quotehawk"
+app.description = "Draft-only RFQ workflow and approval API for QuoteHawk"
+configure_quotehawk_api(app)
+app.include_router(quotehawk_router)
 
 
 # Main execution
