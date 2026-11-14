@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from time import perf_counter
 from typing import Never
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from psycopg.errors import UniqueViolation
@@ -41,12 +43,42 @@ from app.observability import (
     reset_request_id,
 )
 from app.persistence.factory import repository_from_environment
-from app.persistence.repository import QuoteHawkRepository
+from app.persistence.repository import (
+    ConcurrentRunUpdateError,
+    IdempotencyConflictError,
+    QuoteHawkRepository,
+)
 from app.policies.pricing import PolicyViolation
 from app.workflow.engine import RfqWorkflow
 from app.workflow.models import RfqWorkflowResult
 
 router = APIRouter(prefix="/api/rfq", tags=["rfq"])
+_IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}")
+
+
+class InvalidIdempotencyKeyError(ValueError):
+    """The request header does not meet the opaque key contract."""
+
+
+def _idempotency_context(
+    submission: RfqRunSubmission, request: Request
+) -> tuple[str | None, str | None]:
+    """Validate an opaque retry key and hash normalized input without logging either."""
+
+    header_value = request.headers.get("Idempotency-Key")
+    if header_value is None:
+        return None, None
+    idempotency_key = header_value.strip()
+    if not _IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key):
+        raise InvalidIdempotencyKeyError(
+            "Idempotency-Key must be an opaque 8-128 character identifier"
+        )
+    canonical_request = json.dumps(
+        submission.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return idempotency_key, hashlib.sha256(canonical_request.encode()).hexdigest()
 
 
 def configure_quotehawk_api(
@@ -207,6 +239,15 @@ def _raise_http_error(error: Exception) -> Never:
         ) from error
     if isinstance(error, (AuthorizationError, PermissionError)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    if isinstance(error, ConcurrentRunUpdateError):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="RFQ run is being updated; retry with the same idempotency key",
+        ) from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    if isinstance(error, InvalidIdempotencyKeyError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     if isinstance(error, (json.JSONDecodeError, ValidationError)):
         # Do not echo invalid supplier content or Pydantic's input fragments.
         raise HTTPException(
@@ -225,22 +266,45 @@ def healthz() -> dict[str, str]:
     return {"status": "ok", "execution_boundary": "draft_only"}
 
 
+@router.get("/readyz", include_in_schema=False)
+def readyz(request: Request) -> dict[str, str]:
+    """Check configured storage readiness without returning tenant or RFQ data."""
+
+    try:
+        _memory(request).readiness_check()
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="QuoteHawk persistence is not ready",
+        ) from error
+    return {"status": "ready", "execution_boundary": "draft_only"}
+
+
 @router.post("/runs", response_model=RfqWorkflowResult, status_code=status.HTTP_201_CREATED)
-def create_rfq_run(submission: RfqRunSubmission, request: Request) -> RfqWorkflowResult:
+def create_rfq_run(
+    submission: RfqRunSubmission,
+    request: Request,
+    response: Response,
+) -> RfqWorkflowResult:
     """Run deterministic policy and persist concise workflow/audit events."""
 
     workflow, _, _ = _services(request)
     try:
         principal = _principal(request, Permission.WRITE)
+        idempotency_key, request_fingerprint = _idempotency_context(submission, request)
         result = workflow.run(
             submission.requisition,
             submission.quotes,
             observed_on=submission.observed_on,
             run_id=submission.run_id,
             tenant_id=principal.tenant_id,
+            idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
         )
     except Exception as error:
         _raise_http_error(error)
+    if result.idempotent_replay:
+        response.status_code = status.HTTP_200_OK
     record_event(
         "rfq_run_completed",
         run_id=result.run.run_id,
@@ -249,6 +313,26 @@ def create_rfq_run(submission: RfqRunSubmission, request: Request) -> RfqWorkflo
         approval_ready_quote_count=sum(
             score.approval_ready for score in result.comparison.ranked_quotes
         ),
+        execution_boundary="draft_only",
+    )
+    return result
+
+
+@router.post("/runs/{run_id}/resume", response_model=RfqWorkflowResult)
+def resume_rfq_run(run_id: str, request: Request) -> RfqWorkflowResult:
+    """Resume durable deterministic work after a retry or interrupted worker process."""
+
+    workflow, _, _ = _services(request)
+    try:
+        principal = _principal(request, Permission.WRITE)
+        _assert_tenant_access(_memory(request), run_id, principal)
+        result = workflow.resume(run_id, tenant_id=principal.tenant_id)
+    except Exception as error:
+        _raise_http_error(error)
+    record_event(
+        "rfq_run_resumed",
+        run_id=result.run.run_id,
+        state=result.run.state,
         execution_boundary="draft_only",
     )
     return result

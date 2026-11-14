@@ -63,3 +63,4 @@ class RfqWorkflowResult(BaseModel):
     comparison: QuoteComparison
     anomalies: tuple[QuoteAnomaly, ...]
     audit_events: tuple[RfqAuditEvent, ...]
+    idempotent_replay: bool = False

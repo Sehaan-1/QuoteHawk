@@ -30,11 +30,25 @@ from app.domain.models import (
     SupplierBaseline,
     SupplierObservation,
 )
+from app.persistence.repository import (
+    ConcurrentRunUpdateError,
+    IdempotencyConflictError,
+    RfqRunCreation,
+)
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 from app.workflow.state_machine import InvalidStateTransition, assert_transition
 
 INITIAL_MIGRATION_VERSION = "0001_quotehawk_postgres"
-_INITIAL_MIGRATION_PATH = Path(__file__).with_name("migrations") / "0001_quotehawk_postgres.sql"
+_MIGRATIONS = (
+    (
+        INITIAL_MIGRATION_VERSION,
+        Path(__file__).with_name("migrations") / "0001_quotehawk_postgres.sql",
+    ),
+    (
+        "0002_workflow_resiliency",
+        Path(__file__).with_name("migrations") / "0002_workflow_resiliency.sql",
+    ),
+)
 ConnectionFactory = Callable[[str], Any]
 
 
@@ -60,10 +74,11 @@ def _json_object(value: object) -> dict[str, Any]:
     raise ValueError("persisted RFQ payload is not a JSON object")
 
 
-def _migration_statements() -> tuple[str, ...]:
-    """Return the reviewed migration as individual PostgreSQL statements."""
+def _migration_statements(path: Path | None = None) -> tuple[str, ...]:
+    """Return a reviewed migration as individual PostgreSQL statements."""
 
-    migration = _INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
+    migration_path = path or _MIGRATIONS[0][1]
+    migration = migration_path.read_text(encoding="utf-8")
     return tuple(statement.strip() for statement in migration.split(";") if statement.strip())
 
 
@@ -128,18 +143,19 @@ class PostgresSupplierMemory:
                 """
             )
             connection.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("quotehawk-schema",))
-            applied = connection.execute(
-                "SELECT 1 FROM quotehawk.schema_migrations WHERE version = %s",
-                (INITIAL_MIGRATION_VERSION,),
-            ).fetchone()
-            if applied is not None:
-                return
-            for statement in _migration_statements():
-                connection.execute(statement)
-            connection.execute(
-                "INSERT INTO quotehawk.schema_migrations (version) VALUES (%s)",
-                (INITIAL_MIGRATION_VERSION,),
-            )
+            for version, migration_path in _MIGRATIONS:
+                applied = connection.execute(
+                    "SELECT 1 FROM quotehawk.schema_migrations WHERE version = %s",
+                    (version,),
+                ).fetchone()
+                if applied is not None:
+                    continue
+                for statement in _migration_statements(migration_path):
+                    connection.execute(statement)
+                connection.execute(
+                    "INSERT INTO quotehawk.schema_migrations (version) VALUES (%s)",
+                    (version,),
+                )
 
     def record_observation(
         self, observation: SupplierObservation, *, tenant_id: str = DEFAULT_TENANT_ID
@@ -312,38 +328,131 @@ class PostgresSupplierMemory:
     ) -> RfqRun:
         """Create an intake run and first immutable audit event in one transaction."""
 
+        creation = self.create_or_retrieve_rfq_run(
+            run_id=run_id,
+            requisition_id=requisition_id,
+            tenant_id=tenant_id,
+            payload=payload,
+        )
+        if not creation.created:
+            raise ValueError(f"RFQ run {run_id} already exists")
+        return creation.run
+
+    def create_or_retrieve_rfq_run(
+        self,
+        *,
+        run_id: str,
+        requisition_id: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        payload: Mapping[str, Any],
+        idempotency_key: str | None = None,
+        request_fingerprint: str | None = None,
+    ) -> RfqRunCreation:
+        """Atomically create a run or return the existing tenant/idempotency row."""
+
+        if (idempotency_key is None) != (request_fingerprint is None):
+            raise ValueError("idempotency key and request fingerprint must be supplied together")
         now = _utc_now()
+        existing_run_id: str | None = None
+        existing_fingerprint: str | None = None
         with self._tenant_connection(tenant_id) as connection:
-            connection.execute(
-                """
-                INSERT INTO quotehawk.rfq_runs (
-                    run_id, requisition_id, tenant_id, state, version, created_at, updated_at, payload_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    run_id,
-                    requisition_id,
-                    tenant_id,
-                    RfqRunState.INTAKE.value,
-                    0,
-                    now,
-                    now,
-                    Jsonb(dict(payload)),
-                ),
+            if idempotency_key is None:
+                connection.execute(
+                    """
+                    INSERT INTO quotehawk.rfq_runs (
+                        run_id, requisition_id, tenant_id, state, version, created_at, updated_at,
+                        payload_json, idempotency_key, request_fingerprint
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        run_id,
+                        requisition_id,
+                        tenant_id,
+                        RfqRunState.INTAKE.value,
+                        0,
+                        now,
+                        now,
+                        Jsonb(dict(payload)),
+                        None,
+                        None,
+                    ),
+                )
+                created = True
+            else:
+                inserted = connection.execute(
+                    """
+                    INSERT INTO quotehawk.rfq_runs (
+                        run_id, requisition_id, tenant_id, state, version, created_at, updated_at,
+                        payload_json, idempotency_key, request_fingerprint
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (tenant_id, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL DO NOTHING
+                    RETURNING run_id
+                    """,
+                    (
+                        run_id,
+                        requisition_id,
+                        tenant_id,
+                        RfqRunState.INTAKE.value,
+                        0,
+                        now,
+                        now,
+                        Jsonb(dict(payload)),
+                        idempotency_key,
+                        request_fingerprint,
+                    ),
+                ).fetchone()
+                created = inserted is not None
+                if not created:
+                    existing = connection.execute(
+                        """
+                        SELECT run_id, request_fingerprint FROM quotehawk.rfq_runs
+                        WHERE tenant_id = %s AND idempotency_key = %s
+                        """,
+                        (tenant_id, idempotency_key),
+                    ).fetchone()
+                    if existing is None:
+                        raise RuntimeError("idempotency conflict could not be loaded")
+                    existing_run_id = existing["run_id"]
+                    existing_fingerprint = existing["request_fingerprint"]
+                    if existing_fingerprint != request_fingerprint:
+                        raise IdempotencyConflictError(
+                            "idempotency key was already used for a different RFQ submission"
+                        )
+            if created:
+                self._insert_event(
+                    connection,
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                    sequence=1,
+                    occurred_at=now,
+                    event_type="run_created",
+                    from_state=None,
+                    to_state=RfqRunState.INTAKE,
+                    reason="RFQ run accepted for deterministic processing.",
+                    details={"requisition_id": requisition_id},
+                )
+        if not created:
+            return RfqRunCreation(
+                run=self.load_rfq_run(existing_run_id or run_id, tenant_id=tenant_id),
+                created=False,
+                request_fingerprint=existing_fingerprint,
             )
-            self._insert_event(
-                connection,
-                run_id=run_id,
-                tenant_id=tenant_id,
-                sequence=1,
-                occurred_at=now,
-                event_type="run_created",
-                from_state=None,
-                to_state=RfqRunState.INTAKE,
-                reason="RFQ run accepted for deterministic processing.",
-                details={"requisition_id": requisition_id},
-            )
-        return self.load_rfq_run(run_id, tenant_id=tenant_id)
+        return RfqRunCreation(
+            run=self.load_rfq_run(run_id, tenant_id=tenant_id),
+            created=True,
+            request_fingerprint=request_fingerprint,
+        )
+
+    def readiness_check(self) -> None:
+        """Verify reachable Postgres schema versions without reading tenant data."""
+
+        with self._schema_connection() as connection:
+            rows = connection.execute("SELECT version FROM quotehawk.schema_migrations").fetchall()
+        applied = {row["version"] for row in rows}
+        required = {version for version, _ in _MIGRATIONS}
+        if not required.issubset(applied):
+            raise RuntimeError("Postgres schema migration is incomplete")
 
     def advance_rfq_run(
         self,
@@ -447,7 +556,9 @@ class PostgresSupplierMemory:
                 ),
             )
             if updated.rowcount != 1:
-                raise RuntimeError("RFQ run changed concurrently; retry from persisted state")
+                raise ConcurrentRunUpdateError(
+                    "RFQ run changed concurrently; retry from persisted state"
+                )
             self._insert_event(
                 connection,
                 run_id=run_id,
@@ -581,7 +692,9 @@ class PostgresSupplierMemory:
                 ),
             )
             if updated.rowcount != 1:
-                raise RuntimeError("RFQ run changed concurrently; retry from persisted state")
+                raise ConcurrentRunUpdateError(
+                    "RFQ run changed concurrently; retry from persisted state"
+                )
             self._insert_event(
                 connection,
                 run_id=approval.run_id,
