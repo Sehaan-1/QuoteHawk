@@ -1,17 +1,58 @@
-"""Small persistence contract so SQLite can later be replaced by Postgres."""
+"""Small persistence contracts so SQLite can later be replaced by Postgres."""
 
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Mapping
+from datetime import date
+from typing import Any, Protocol
 
-from app.domain.models import SupplierBaseline, SupplierObservation
+from app.analysis.models import SupplierQuoteBaseline
+from app.domain.models import NormalizedQuote, SupplierBaseline, SupplierObservation
+from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 
 
 class SupplierMemoryRepository(Protocol):
-    """Persistence needed by the policy/anomaly layers."""
+    """Historical supplier data needed by policy and anomaly analysis."""
 
     def record_observation(self, observation: SupplierObservation) -> None:
-        """Upsert one auditable supplier observation."""
+        """Upsert one auditable supplier performance observation."""
 
     def baseline_for(self, vendor_id: str, currency: str) -> SupplierBaseline | None:
-        """Return a deterministic vendor baseline for one currency, if present."""
+        """Return a deterministic vendor performance baseline, if present."""
+
+    def record_quote_history(self, quote: NormalizedQuote, observed_on: date) -> None:
+        """Persist a commercial bid after it is analyzed."""
+
+    def quote_baseline_for(
+        self,
+        vendor_id: str,
+        currency: str,
+        *,
+        as_of: date,
+        lookback_days: int,
+    ) -> SupplierQuoteBaseline | None:
+        """Return prior commercial history excluding the current quote."""
+
+
+class RfqRunRepository(Protocol):
+    """Durable state/event persistence required by the explicit workflow."""
+
+    def create_rfq_run(
+        self, *, run_id: str, requisition_id: str, payload: Mapping[str, Any]
+    ) -> RfqRun:
+        """Create an intake run."""
+
+    def advance_rfq_run(
+        self,
+        *,
+        run_id: str,
+        to_state: RfqRunState,
+        event_type: str,
+        reason: str,
+        details: Mapping[str, Any] | None = None,
+        payload_patch: Mapping[str, Any] | None = None,
+    ) -> RfqRun:
+        """Persist one valid state transition and audit event."""
+
+    def audit_events_for(self, run_id: str) -> tuple[RfqAuditEvent, ...]:
+        """Return the ordered audit trail."""

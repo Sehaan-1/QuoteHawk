@@ -13,8 +13,17 @@ identity or terms, or bypass buyer approval.
 - `app/policies/` is deterministic policy authority for cost math, budget rules,
   scoring, and future workflow transitions. Do not move this authority into an
   LLM prompt.
-- `app/persistence/` provides supplier-memory interfaces and the local SQLite
-  implementation. Keep it replaceable by Postgres.
+- `app/persistence/` provides supplier-memory, RFQ-snapshot, and audit-event
+  interfaces plus the local SQLite implementation. Keep it replaceable by
+  Postgres.
+- `app/analysis/` compares a bid to *prior* quote history. Never add the current
+  bid to its own baseline before the anomaly detector has run.
+- `app/workflow/` owns the finite-state allowlist. PR 2 ends at
+  `negotiation_or_ready`; do not enable an approval transition until PR 3 has an
+  authenticated buyer gate.
+- `app/simulation/` generates adversarial supplier payloads. Extend it alongside
+  deterministic regression tests whenever a new extraction or policy boundary is
+  introduced.
 - `app/agent.py` is the optional Google ADK/Gemini boundary. Treat all model
   output as untrusted until Pydantic validates it.
 
