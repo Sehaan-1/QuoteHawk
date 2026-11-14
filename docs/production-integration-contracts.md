@@ -91,18 +91,18 @@ ship a production endpoint protected only by `QUOTEHAWK_AUTHORIZED_BUYERS`.
 
 ## Identity and approval contract
 
-`QUOTEHAWK_AUTHORIZED_BUYERS` is a local-demo allowlist, not authentication or
-authorization. Before exposing buyer decisions beyond a trusted prototype, a
-future implementation must:
+QuoteHawk now has an explicit `oidc` API mode that verifies an existing provider's
+asymmetrically signed bearer JWT, derives `sub`, tenant, and roles from verified
+claims, scopes RFQ/supplier data by tenant, and persists server-derived approval
+actor fields. The default `prototype` mode and `QUOTEHAWK_AUTHORIZED_BUYERS`
+remain local-demo compatibility only, not production authentication.
 
-1. verify an OIDC/OAuth access token or signed identity assertion at the API edge;
-2. derive the buyer principal and tenant/server-side roles from verified claims,
-   rather than trusting the request's `buyer_id` field;
-3. authorize the principal to view the run and to approve its tenant/cost scope;
-4. record immutable actor, tenant, policy version, approval timestamp, and
-   correlation data in an auditable store; and
-5. retain the current hard budget, selected-quote eligibility, and finite-state
-   checks as server-side controls after identity is added.
+See [the identity and tenancy guide](identity-and-tenancy.md) for required
+configuration, capability mapping, token-validation requirements, and SQLite
+migration behavior. A future deployment owner must still provision and operate the
+identity provider, application registration, role/tenant governance, edge TLS,
+user lifecycle, and token/JWKS availability. QuoteHawk does not implement an OAuth
+login, issue credentials, or store OAuth client secrets.
 
 Do not make a UI control, a model instruction, a header named `admin`, or an OAuth
 scope alone equivalent to a policy override. Any future override needs an explicit,

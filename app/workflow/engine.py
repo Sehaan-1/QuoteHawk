@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.analysis.anomaly_detector import AnomalyPolicy, detect_quote_anomalies
 from app.analysis.models import QuoteAnomaly, SupplierQuoteBaseline
+from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import (
     NormalizedQuote,
     PurchaseRequisition,
@@ -45,6 +46,7 @@ class RfqWorkflow:
         *,
         observed_on: date | None = None,
         run_id: str | None = None,
+        tenant_id: str = DEFAULT_TENANT_ID,
     ) -> RfqWorkflowResult:
         """Normalize the persisted flow from intake through negotiation readiness."""
 
@@ -54,6 +56,7 @@ class RfqWorkflow:
         self.memory.create_rfq_run(
             run_id=run_id,
             requisition_id=requisition.requisition_id,
+            tenant_id=tenant_id,
             payload={
                 "requisition": requisition.model_dump(mode="json"),
                 "quotes": [quote.model_dump(mode="json") for quote in received_quotes],
@@ -71,7 +74,7 @@ class RfqWorkflow:
             )
 
             memory_payload, supplier_performance, quote_baselines = self._load_memory(
-                received_quotes, observed_on
+                received_quotes, observed_on, tenant_id
             )
             self.memory.advance_rfq_run(
                 run_id=run_id,
@@ -108,7 +111,7 @@ class RfqWorkflow:
 
             # Persist only after using the prior window, preventing self-baselining.
             for quote in received_quotes:
-                self.memory.record_quote_history(quote, observed_on)
+                self.memory.record_quote_history(quote, observed_on, tenant_id=tenant_id)
 
             approval_ready_count = sum(score.approval_ready for score in comparison.ranked_quotes)
             reason = (
@@ -143,7 +146,10 @@ class RfqWorkflow:
         )
 
     def _load_memory(
-        self, quotes: tuple[NormalizedQuote, ...], observed_on: date
+        self,
+        quotes: tuple[NormalizedQuote, ...],
+        observed_on: date,
+        tenant_id: str,
     ) -> tuple[
         dict[str, object],
         dict[str, Decimal],
@@ -155,10 +161,13 @@ class RfqWorkflow:
         performance_scores: dict[str, Decimal] = {}
         quote_baselines: dict[str, SupplierQuoteBaseline | None] = {}
         for quote in quotes:
-            performance = self.memory.baseline_for(quote.vendor_id, quote.currency)
+            performance = self.memory.baseline_for(
+                quote.vendor_id, quote.currency, tenant_id=tenant_id
+            )
             quote_baseline = self.memory.quote_baseline_for(
                 quote.vendor_id,
                 quote.currency,
+                tenant_id=tenant_id,
                 as_of=observed_on,
                 lookback_days=self.anomaly_policy.lookback_days,
             )
