@@ -108,24 +108,43 @@ Do not make a UI control, a model instruction, a header named `admin`, or an OAu
 scope alone equivalent to a policy override. Any future override needs an explicit,
 reviewed product requirement and its own durable authorization/audit path.
 
-## Postgres repository replacement contract
+## Postgres repository and migration contract
 
-The repository seam in `app/persistence/repository.py` is intentionally narrow.
-A Postgres implementation must preserve the observable semantics of
-`SqliteSupplierMemory`:
+QuoteHawk now includes `PostgresSupplierMemory`, selected only when
+`QUOTEHAWK_PERSISTENCE_BACKEND=postgres`. Its reviewed initial schema lives at
+[`../app/persistence/migrations/0001_quotehawk_postgres.sql`](../app/persistence/migrations/0001_quotehawk_postgres.sql).
+The default remains `sqlite` for credential-free local demos.
 
-- canonical decimal storage (not binary floating-point money);
+Before starting an API process against Postgres, a deployment owner must provide a
+TLS-protected secret-managed `QUOTEHAWK_POSTGRES_DSN` and run the explicit,
+transactional migration command:
+
+```bash
+uv run python -m app.persistence.postgres --dsn "$QUOTEHAWK_POSTGRES_DSN"
+```
+
+The API never auto-migrates production storage and never silently falls back to
+SQLite when the Postgres backend is selected. The migration records its own version
+in `quotehawk.schema_migrations`; take a backup and use a reviewed change window
+before any future migration version.
+
+The schema uses Postgres `NUMERIC` for money, JSONB snapshots, tenant-inclusive
+supplier-history primary keys, composite RFQ child foreign keys, and unique run,
+approval, PO-draft, and event-sequence constraints. The repository preserves:
+
 - tenant-scoped vendor/quote history and rolling queries that exclude an incoming
   quote from its own baseline;
-- atomic RFQ version compare-and-swap, state transition, audit-event sequence, and
-  approval/PO-draft write;
-- unique run, approval, PO-draft, and event-sequence constraints; and
-- read models compatible with the Pydantic contracts and SSE audit facts.
+- atomic RFQ row locks plus version compare-and-swap, state transition,
+  audit-event sequence, and approval/PO-draft write; and
+- Pydantic-compatible run, approval, draft, and SSE read models.
 
-Use migrations, transactions, row-level/optimistic concurrency controls, backups,
-encryption, access boundaries, retention, and tenant partitioning appropriate to
-the organization. Do not silently fall back from Postgres to a local database in a
-production process.
+Every Postgres repository transaction runs `set_config('quotehawk.tenant_id', tenant,
+true)` and includes its tenant predicate in application SQL. The schema enables and
+forces row-level security on business tables with matching `quotehawk.tenant_id`
+policies, providing defense in depth against an accidentally unscoped query. The
+application database role must not bypass row-level security; restrict its schema
+privileges, use TLS, retain backups/encryption/retention controls, and keep the DSN
+outside source, client bundles, and logs.
 
 ## Vendor mail and ERP integration contract
 
