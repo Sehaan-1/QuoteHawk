@@ -16,7 +16,7 @@ from app.workflow.models import RfqAuditEvent, RfqRun, RfqWorkflowResult
 class RfqRunSubmission(BaseModel):
     """Validated input for one local RFQ workflow invocation."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     requisition: PurchaseRequisition
     quotes: tuple[NormalizedQuote, ...] = Field(min_length=1, max_length=5)
@@ -27,7 +27,7 @@ class RfqRunSubmission(BaseModel):
 class RfqRunDetail(BaseModel):
     """Resumable workflow view for the future dashboard and mobile approval card."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run: RfqRun
     audit_events: tuple[RfqAuditEvent, ...]
@@ -39,7 +39,7 @@ class RfqRunDetail(BaseModel):
 class QuoteExtractionRequest(BaseModel):
     """Untrusted source text and an explicit provider choice."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     raw_quote: str = Field(min_length=1, max_length=50_000)
     provider: ExtractionProvider = ExtractionProvider.FIXTURE

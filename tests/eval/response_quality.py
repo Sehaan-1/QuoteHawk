@@ -48,7 +48,6 @@ def evaluate(instance):
     )
     if reference:
         prompt += f"Expected Answer (ground truth): {reference}\n"
-    prompt += f"Full Agent Trace: {instance.get('agent_data', '')}\n"
 
     response = _client().models.generate_content(
         model="gemini-3.8-flash",

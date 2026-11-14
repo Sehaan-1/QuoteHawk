@@ -28,7 +28,7 @@ class RfqRunState(StrEnum):
 class RfqRun(BaseModel):
     """Durable RFQ run metadata, safe to expose to a later API."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: str = Field(min_length=1, max_length=100)
     requisition_id: str = Field(min_length=1, max_length=80)
@@ -41,7 +41,7 @@ class RfqRun(BaseModel):
 class RfqAuditEvent(BaseModel):
     """A concise, non-chain-of-thought record of a run event."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: str
     sequence: int = Field(ge=1)
@@ -56,7 +56,7 @@ class RfqAuditEvent(BaseModel):
 class RfqWorkflowResult(BaseModel):
     """The deterministic output after QuoteHawk finishes its PR-2 path."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run: RfqRun
     comparison: QuoteComparison
