@@ -17,6 +17,7 @@ from app.approval.models import (
     ApprovalRecord,
     PurchaseOrderDraft,
 )
+from app.auth.models import DEFAULT_TENANT_ID, AuthMode
 from app.domain.models import (
     NormalizedQuote,
     QuoteComparison,
@@ -65,6 +66,7 @@ class SqliteSupplierMemory:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS supplier_observations (
+                    tenant_id TEXT NOT NULL,
                     vendor_id TEXT NOT NULL,
                     quote_id TEXT NOT NULL,
                     observed_on TEXT NOT NULL,
@@ -74,19 +76,14 @@ class SqliteSupplierMemory:
                     delivery_delay_days INTEGER NOT NULL,
                     responsiveness_score TEXT NOT NULL,
                     discount_margin TEXT NOT NULL,
-                    PRIMARY KEY (vendor_id, quote_id)
+                    PRIMARY KEY (tenant_id, vendor_id, quote_id)
                 )
                 """
             )
             connection.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_supplier_observations_vendor_currency
-                ON supplier_observations (vendor_id, currency, observed_on)
-                """
-            )
-            connection.execute(
-                """
                 CREATE TABLE IF NOT EXISTS supplier_quote_history (
+                    tenant_id TEXT NOT NULL,
                     vendor_id TEXT NOT NULL,
                     quote_id TEXT NOT NULL,
                     observed_on TEXT NOT NULL,
@@ -95,14 +92,8 @@ class SqliteSupplierMemory:
                     freight_cost TEXT NOT NULL,
                     lead_time_days INTEGER NOT NULL,
                     payment_term_days INTEGER NOT NULL,
-                    PRIMARY KEY (vendor_id, quote_id)
+                    PRIMARY KEY (tenant_id, vendor_id, quote_id)
                 )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_supplier_quote_history_window
-                ON supplier_quote_history (vendor_id, currency, observed_on)
                 """
             )
             connection.execute(
@@ -110,6 +101,7 @@ class SqliteSupplierMemory:
                 CREATE TABLE IF NOT EXISTS rfq_runs (
                     run_id TEXT PRIMARY KEY,
                     requisition_id TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
                     state TEXT NOT NULL,
                     version INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
@@ -139,6 +131,9 @@ class SqliteSupplierMemory:
                 CREATE TABLE IF NOT EXISTS rfq_approvals (
                     run_id TEXT PRIMARY KEY,
                     buyer_id TEXT NOT NULL,
+                    actor_subject TEXT NOT NULL,
+                    actor_tenant_id TEXT NOT NULL,
+                    authentication_method TEXT NOT NULL,
                     decision TEXT NOT NULL,
                     selected_quote_id TEXT,
                     note TEXT,
@@ -158,19 +153,135 @@ class SqliteSupplierMemory:
                 )
                 """
             )
+            self._migrate_identity_schema(connection)
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_supplier_observations_tenant_vendor_currency
+                ON supplier_observations (tenant_id, vendor_id, currency, observed_on)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_supplier_quote_history_tenant_window
+                ON supplier_quote_history (tenant_id, vendor_id, currency, observed_on)
+                """
+            )
 
-    def record_observation(self, observation: SupplierObservation) -> None:
+    @staticmethod
+    def _has_column(connection: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+        return any(
+            row["name"] == column_name
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        )
+
+    @classmethod
+    def _migrate_identity_schema(cls, connection: sqlite3.Connection) -> None:
+        """Upgrade local PR-5 databases without mixing tenant commercial history."""
+
+        if not cls._has_column(connection, "supplier_observations", "tenant_id"):
+            connection.execute(
+                "ALTER TABLE supplier_observations RENAME TO supplier_observations_legacy"
+            )
+            connection.execute(
+                """
+                CREATE TABLE supplier_observations (
+                    tenant_id TEXT NOT NULL,
+                    vendor_id TEXT NOT NULL,
+                    quote_id TEXT NOT NULL,
+                    observed_on TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    average_unit_price TEXT NOT NULL,
+                    freight_cost TEXT NOT NULL,
+                    delivery_delay_days INTEGER NOT NULL,
+                    responsiveness_score TEXT NOT NULL,
+                    discount_margin TEXT NOT NULL,
+                    PRIMARY KEY (tenant_id, vendor_id, quote_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO supplier_observations (
+                    tenant_id, vendor_id, quote_id, observed_on, currency, average_unit_price,
+                    freight_cost, delivery_delay_days, responsiveness_score, discount_margin
+                )
+                SELECT ?, vendor_id, quote_id, observed_on, currency, average_unit_price,
+                       freight_cost, delivery_delay_days, responsiveness_score, discount_margin
+                FROM supplier_observations_legacy
+                """,
+                (DEFAULT_TENANT_ID,),
+            )
+            connection.execute("DROP TABLE supplier_observations_legacy")
+
+        if not cls._has_column(connection, "supplier_quote_history", "tenant_id"):
+            connection.execute(
+                "ALTER TABLE supplier_quote_history RENAME TO supplier_quote_history_legacy"
+            )
+            connection.execute(
+                """
+                CREATE TABLE supplier_quote_history (
+                    tenant_id TEXT NOT NULL,
+                    vendor_id TEXT NOT NULL,
+                    quote_id TEXT NOT NULL,
+                    observed_on TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    average_unit_price TEXT NOT NULL,
+                    freight_cost TEXT NOT NULL,
+                    lead_time_days INTEGER NOT NULL,
+                    payment_term_days INTEGER NOT NULL,
+                    PRIMARY KEY (tenant_id, vendor_id, quote_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO supplier_quote_history (
+                    tenant_id, vendor_id, quote_id, observed_on, currency, average_unit_price,
+                    freight_cost, lead_time_days, payment_term_days
+                )
+                SELECT ?, vendor_id, quote_id, observed_on, currency, average_unit_price,
+                       freight_cost, lead_time_days, payment_term_days
+                FROM supplier_quote_history_legacy
+                """,
+                (DEFAULT_TENANT_ID,),
+            )
+            connection.execute("DROP TABLE supplier_quote_history_legacy")
+
+        if not cls._has_column(connection, "rfq_runs", "tenant_id"):
+            connection.execute(
+                "ALTER TABLE rfq_runs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local-demo'"
+            )
+        if not cls._has_column(connection, "rfq_approvals", "actor_subject"):
+            connection.execute(
+                "ALTER TABLE rfq_approvals "
+                "ADD COLUMN actor_subject TEXT NOT NULL DEFAULT 'prototype-legacy'"
+            )
+            # Old approvals were made through the local buyer-ID field. Preserve
+            # that known legacy actor instead of labeling every decision identically.
+            connection.execute("UPDATE rfq_approvals SET actor_subject = buyer_id")
+        approval_columns = (
+            ("actor_tenant_id", "TEXT NOT NULL DEFAULT 'local-demo'"),
+            ("authentication_method", "TEXT NOT NULL DEFAULT 'prototype'"),
+        )
+        for column_name, declaration in approval_columns:
+            if not cls._has_column(connection, "rfq_approvals", column_name):
+                connection.execute(
+                    f"ALTER TABLE rfq_approvals ADD COLUMN {column_name} {declaration}"
+                )
+
+    def record_observation(
+        self, observation: SupplierObservation, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> None:
         """Create or update one supplier performance event by quote identity."""
 
         with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO supplier_observations (
-                    vendor_id, quote_id, observed_on, currency, average_unit_price,
-                    freight_cost, delivery_delay_days, responsiveness_score,
-                    discount_margin
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(vendor_id, quote_id) DO UPDATE SET
+                    tenant_id, vendor_id, quote_id, observed_on, currency, average_unit_price,
+                    freight_cost, delivery_delay_days, responsiveness_score, discount_margin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, vendor_id, quote_id) DO UPDATE SET
                     observed_on = excluded.observed_on,
                     currency = excluded.currency,
                     average_unit_price = excluded.average_unit_price,
@@ -180,6 +291,7 @@ class SqliteSupplierMemory:
                     discount_margin = excluded.discount_margin
                 """,
                 (
+                    tenant_id,
                     observation.vendor_id,
                     observation.quote_id,
                     observation.observed_on.isoformat(),
@@ -192,7 +304,13 @@ class SqliteSupplierMemory:
                 ),
             )
 
-    def baseline_for(self, vendor_id: str, currency: str) -> SupplierBaseline | None:
+    def baseline_for(
+        self,
+        vendor_id: str,
+        currency: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> SupplierBaseline | None:
         """Calculate a supplier performance baseline from outcome observations."""
 
         with self._connection() as connection:
@@ -201,10 +319,10 @@ class SqliteSupplierMemory:
                 SELECT average_unit_price, freight_cost, delivery_delay_days,
                        responsiveness_score, discount_margin
                 FROM supplier_observations
-                WHERE vendor_id = ? AND currency = ?
+                WHERE tenant_id = ? AND vendor_id = ? AND currency = ?
                 ORDER BY observed_on ASC, quote_id ASC
                 """,
-                (vendor_id, currency.upper()),
+                (tenant_id, vendor_id, currency.upper()),
             ).fetchall()
 
         if not rows:
@@ -235,17 +353,23 @@ class SqliteSupplierMemory:
             / count,
         )
 
-    def record_quote_history(self, quote: NormalizedQuote, observed_on: date) -> None:
+    def record_quote_history(
+        self,
+        quote: NormalizedQuote,
+        observed_on: date,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> None:
         """Store a normalized quote only after anomaly analysis completes."""
 
         with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO supplier_quote_history (
-                    vendor_id, quote_id, observed_on, currency, average_unit_price,
+                    tenant_id, vendor_id, quote_id, observed_on, currency, average_unit_price,
                     freight_cost, lead_time_days, payment_term_days
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(vendor_id, quote_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, vendor_id, quote_id) DO UPDATE SET
                     observed_on = excluded.observed_on,
                     currency = excluded.currency,
                     average_unit_price = excluded.average_unit_price,
@@ -254,6 +378,7 @@ class SqliteSupplierMemory:
                     payment_term_days = excluded.payment_term_days
                 """,
                 (
+                    tenant_id,
                     quote.vendor_id,
                     quote.quote_id,
                     observed_on.isoformat(),
@@ -270,6 +395,7 @@ class SqliteSupplierMemory:
         vendor_id: str,
         currency: str,
         *,
+        tenant_id: str = DEFAULT_TENANT_ID,
         as_of: date,
         lookback_days: int,
     ) -> SupplierQuoteBaseline | None:
@@ -281,11 +407,17 @@ class SqliteSupplierMemory:
                 """
                 SELECT average_unit_price, freight_cost, lead_time_days, payment_term_days
                 FROM supplier_quote_history
-                WHERE vendor_id = ? AND currency = ?
+                WHERE tenant_id = ? AND vendor_id = ? AND currency = ?
                   AND observed_on >= ? AND observed_on < ?
                 ORDER BY observed_on ASC, quote_id ASC
                 """,
-                (vendor_id, currency.upper(), window_start.isoformat(), as_of.isoformat()),
+                (
+                    tenant_id,
+                    vendor_id,
+                    currency.upper(),
+                    window_start.isoformat(),
+                    as_of.isoformat(),
+                ),
             ).fetchall()
 
         if not rows:
@@ -318,6 +450,7 @@ class SqliteSupplierMemory:
         *,
         run_id: str,
         requisition_id: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
         payload: Mapping[str, Any],
     ) -> RfqRun:
         """Create an intake run and its first immutable audit event."""
@@ -328,12 +461,13 @@ class SqliteSupplierMemory:
             connection.execute(
                 """
                 INSERT INTO rfq_runs (
-                    run_id, requisition_id, state, version, created_at, updated_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    run_id, requisition_id, tenant_id, state, version, created_at, updated_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     requisition_id,
+                    tenant_id,
                     RfqRunState.INTAKE.value,
                     0,
                     now.isoformat(),
@@ -490,11 +624,13 @@ class SqliteSupplierMemory:
         )
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT state, version, payload_json FROM rfq_runs WHERE run_id = ?",
+                "SELECT state, version, tenant_id, payload_json FROM rfq_runs WHERE run_id = ?",
                 (approval.run_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(f"unknown RFQ run {approval.run_id}")
+            if row["tenant_id"] != approval.actor_tenant_id:
+                raise PermissionError("identity is not authorized for this RFQ tenant")
             from_state = RfqRunState(row["state"])
             assert_transition(from_state, target_state)
 
@@ -524,12 +660,16 @@ class SqliteSupplierMemory:
             connection.execute(
                 """
                 INSERT INTO rfq_approvals (
-                    run_id, buyer_id, decision, selected_quote_id, note, decided_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    run_id, buyer_id, actor_subject, actor_tenant_id, authentication_method,
+                    decision, selected_quote_id, note, decided_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval.run_id,
                     approval.buyer_id,
+                    approval.actor_subject,
+                    approval.actor_tenant_id,
+                    approval.authentication_method.value,
                     approval.decision.value,
                     approval.selected_quote_id,
                     approval.note,
@@ -585,6 +725,9 @@ class SqliteSupplierMemory:
                 ),
                 details={
                     "buyer_id": approval.buyer_id,
+                    "actor_subject": approval.actor_subject,
+                    "actor_tenant_id": approval.actor_tenant_id,
+                    "authentication_method": approval.authentication_method.value,
                     "selected_quote_id": approval.selected_quote_id,
                     "execution_boundary": "draft_only",
                 },
@@ -597,7 +740,8 @@ class SqliteSupplierMemory:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT buyer_id, decision, selected_quote_id, note, decided_at
+                SELECT buyer_id, actor_subject, actor_tenant_id, authentication_method,
+                       decision, selected_quote_id, note, decided_at
                 FROM rfq_approvals WHERE run_id = ?
                 """,
                 (run_id,),
@@ -607,6 +751,9 @@ class SqliteSupplierMemory:
         return ApprovalRecord(
             run_id=run_id,
             buyer_id=row["buyer_id"],
+            actor_subject=row["actor_subject"],
+            actor_tenant_id=row["actor_tenant_id"],
+            authentication_method=AuthMode(row["authentication_method"]),
             decision=ApprovalDecision(row["decision"]),
             selected_quote_id=row["selected_quote_id"],
             note=row["note"],
@@ -655,7 +802,7 @@ class SqliteSupplierMemory:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT run_id, requisition_id, state, version, created_at, updated_at
+                SELECT run_id, requisition_id, tenant_id, state, version, created_at, updated_at
                 FROM rfq_runs WHERE run_id = ?
                 """,
                 (run_id,),
@@ -665,6 +812,7 @@ class SqliteSupplierMemory:
         return RfqRun(
             run_id=row["run_id"],
             requisition_id=row["requisition_id"],
+            tenant_id=row["tenant_id"],
             state=RfqRunState(row["state"]),
             version=row["version"],
             created_at=datetime.fromisoformat(row["created_at"]),
@@ -707,17 +855,23 @@ class SqliteSupplierMemory:
             raise KeyError(f"unknown RFQ run {run_id}")
         return json.loads(row["payload_json"])
 
-    def observation_dates_for(self, vendor_id: str, currency: str) -> tuple[date, ...]:
+    def observation_dates_for(
+        self,
+        vendor_id: str,
+        currency: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> tuple[date, ...]:
         """Expose ordered outcome-history dates for future performance analyzers."""
 
         with self._connection() as connection:
             rows = connection.execute(
                 """
                 SELECT observed_on FROM supplier_observations
-                WHERE vendor_id = ? AND currency = ?
+                WHERE tenant_id = ? AND vendor_id = ? AND currency = ?
                 ORDER BY observed_on ASC, quote_id ASC
                 """,
-                (vendor_id, currency.upper()),
+                (tenant_id, vendor_id, currency.upper()),
             ).fetchall()
         return tuple(date.fromisoformat(row["observed_on"]) for row in rows)
 

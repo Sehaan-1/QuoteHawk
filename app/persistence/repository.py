@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from app.analysis.models import SupplierQuoteBaseline
 from app.approval.models import ApprovalRecord, PurchaseOrderDraft
+from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import NormalizedQuote, SupplierBaseline, SupplierObservation
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 
@@ -15,13 +16,19 @@ from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 class SupplierMemoryRepository(Protocol):
     """Historical supplier data needed by policy and anomaly analysis."""
 
-    def record_observation(self, observation: SupplierObservation) -> None:
+    def record_observation(
+        self, observation: SupplierObservation, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> None:
         """Upsert one auditable supplier performance observation."""
 
-    def baseline_for(self, vendor_id: str, currency: str) -> SupplierBaseline | None:
+    def baseline_for(
+        self, vendor_id: str, currency: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> SupplierBaseline | None:
         """Return a deterministic vendor performance baseline, if present."""
 
-    def record_quote_history(self, quote: NormalizedQuote, observed_on: date) -> None:
+    def record_quote_history(
+        self, quote: NormalizedQuote, observed_on: date, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> None:
         """Persist a commercial bid after it is analyzed."""
 
     def quote_baseline_for(
@@ -29,6 +36,7 @@ class SupplierMemoryRepository(Protocol):
         vendor_id: str,
         currency: str,
         *,
+        tenant_id: str = DEFAULT_TENANT_ID,
         as_of: date,
         lookback_days: int,
     ) -> SupplierQuoteBaseline | None:
@@ -39,7 +47,12 @@ class RfqRunRepository(Protocol):
     """Durable state/event persistence required by the explicit workflow."""
 
     def create_rfq_run(
-        self, *, run_id: str, requisition_id: str, payload: Mapping[str, Any]
+        self,
+        *,
+        run_id: str,
+        requisition_id: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        payload: Mapping[str, Any],
     ) -> RfqRun:
         """Create an intake run."""
 

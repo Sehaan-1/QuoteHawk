@@ -23,27 +23,31 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestone — PR 5
+## Current milestone — PR 6
 
-The prototype now includes buyer-facing clients and a hardened local API boundary:
+The prototype now adds production-oriented API identity boundaries while retaining
+a credential-free local demo path:
 
 - a Next.js five-bid dashboard with landed-cost breakdowns, budget eligibility,
   supplier-history anomalies, concise SSE audit facts, and a confidential
   counter-offer drafting action;
-- an Expo mobile companion for the focused buyer approval/rejection decision;
 - deterministic regressions and optional Gemini/ADK evaluation cases for supplier
   prompt injection, malformed commercial data, confidentiality, approval bypass,
   and draft-only execution boundaries;
 - safe local JSON observability with `X-Request-ID` request/run correlation and
   no supplier documents, commercial values, secrets, or model reasoning in logs;
-  and
+- strict OIDC bearer-JWT verification with server-derived subject, tenant, and
+  role authorization; tenant-scoped RFQ and supplier-memory data; and immutable
+  approval actor fields; and
 - a non-root local runtime container, liveness endpoint, reverse-proxy contract,
   and explicit production identity/Postgres/vendor-mail/ERP integration contracts.
 
-The local buyer allowlist is intentionally not production authentication. Replace
-it with verified identity/OAuth before deployment. Real document ingestion, real
-vendor email, ERP execution, and deployment infrastructure remain intentionally
-out of scope for this prototype stage.
+`QUOTEHAWK_AUTH_MODE=prototype` remains a local fixture/demo fallback only. Set
+`QUOTEHAWK_AUTH_MODE=oidc` with the documented issuer, audience, and HTTPS JWKS
+configuration to require verified identities. QuoteHawk verifies tokens; it does
+not host an OAuth login or provision an identity provider. Real document ingestion,
+vendor email, ERP execution, cloud deployment, and binding PO capability remain
+out of scope.
 
 ## Architecture
 
@@ -63,7 +67,7 @@ fixture JSON or optional Gemini structured extraction
  confidential counter-offer draft / eligible approval request
                    |
                    v
- allowlisted buyer decision -> non-binding PO draft only
+ verified tenant-scoped buyer decision -> non-binding PO draft only
                    |
                    v
  Next.js buyer workspace + Expo approval companion
@@ -96,8 +100,10 @@ uv run ruff check .
 No Gemini key is needed for policy, fixture extraction/drafting, API, or tests.
 To opt into a Gemini adapter, copy `.env.example` to `.env` and configure a local
 `GOOGLE_API_KEY` or `GEMINI_API_KEY`; never commit either file with a real
-secret. `QUOTEHAWK_AUTHORIZED_BUYERS` is a credential-free local allowlist for
-the prototype—not a replacement for production authentication.
+secret. `QUOTEHAWK_AUTHORIZED_BUYERS` is used only by the credential-free
+`prototype` auth mode. For verified identities, configure `QUOTEHAWK_AUTH_MODE=oidc`
+and the required issuer, audience, JWKS URL, tenant claim, and roles described in
+[the identity and tenancy guide](docs/identity-and-tenancy.md).
 
 ## Local container, logs, and runtime boundary
 
@@ -174,7 +180,7 @@ approval path and production persistence are implemented.
 | Fees | Freight and duties must be present explicitly, even when zero. |
 | Precision | All money uses `Decimal`; SQLite stores canonical decimal text. |
 | Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor name is blocked. |
-| Approval | Only an allowlisted buyer can decide an awaiting request, and only an eligible quote can yield a draft. |
+| Approval | In OIDC mode, only a verified token subject with the configured approver role and matching tenant can decide an awaiting request; only an eligible quote can yield a draft. The allowlist is local-prototype fallback only. |
 | Execution | No SMTP, ERP, purchase, or PO-issuance tool exists in the agent surface; an approved payload is `draft_only`. |
 | Untrusted text | Fixture/Gemini extraction treats supplier text as data, rejects unknown/malformed schema fields, and never grants document instructions policy authority. |
 | Observability | Local structured logs correlate safe request/run facts only; they exclude bodies, commercial values, credentials, error text, and model reasoning. |
@@ -187,8 +193,11 @@ approval path and production persistence are implemented.
 4. **Buyer experience** — complete.
 5. **Evaluation, observability, deployability** — complete for the local
    prototype: `agents-cli` safety datasets, adversarial/API regressions, safe local
-   correlation logs, container hardening, and future integration contracts. Cloud
-   deployment remains intentionally deferred.
+   correlation logs, container hardening, and future integration contracts.
+6. **Production identity and tenant authorization** — OIDC JWT verification,
+   role-gated API capabilities, server-derived approval actors, and tenant-scoped
+   local persistence. Identity-provider provisioning and cloud deployment remain
+   intentionally deferred.
 
 ## Project layout
 
