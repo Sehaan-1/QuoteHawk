@@ -43,7 +43,7 @@ class PaymentTerms(StrEnum):
 class RequisitionLine(BaseModel):
     """A line requested by the buyer."""
 
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
     sku: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=500)
@@ -54,7 +54,7 @@ class RequisitionLine(BaseModel):
 class PurchaseRequisition(BaseModel):
     """A buyer's constrained request for supplier quotations."""
 
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
     requisition_id: str = Field(min_length=1, max_length=80)
     currency: str = Field(min_length=3, max_length=3)
@@ -82,7 +82,7 @@ class PurchaseRequisition(BaseModel):
 class QuoteLine(BaseModel):
     """A supplier's priced line, normalized into the requisition currency."""
 
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
     sku: str = Field(min_length=1, max_length=80)
     quoted_quantity: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
@@ -96,7 +96,7 @@ class NormalizedQuote(BaseModel):
     zero. This prevents a parser or supplier from silently omitting a fee.
     """
 
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
     quote_id: str = Field(min_length=1, max_length=100)
     requisition_id: str = Field(min_length=1, max_length=80)
@@ -135,7 +135,7 @@ class NormalizedQuote(BaseModel):
 class LandedCostBreakdown(BaseModel):
     """Every component used to calculate total landed cost."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     currency: str
     line_total: Money = Field(ge=0)
@@ -152,7 +152,7 @@ class LandedCostBreakdown(BaseModel):
 class QuoteScore(BaseModel):
     """An explained score, never a hidden recommendation."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     quote_id: str
     vendor_id: str
@@ -169,7 +169,7 @@ class QuoteScore(BaseModel):
 class QuoteComparison(BaseModel):
     """A stable ranking for all received bids on one requisition."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     requisition_id: str
     currency: str
@@ -179,7 +179,7 @@ class QuoteComparison(BaseModel):
 class SupplierObservation(BaseModel):
     """A historical quote/outcome retained for supplier memory."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     vendor_id: str = Field(min_length=1, max_length=80)
     quote_id: str = Field(min_length=1, max_length=100)
@@ -200,7 +200,7 @@ class SupplierObservation(BaseModel):
 class SupplierBaseline(BaseModel):
     """A deterministic aggregate over local supplier observations."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     vendor_id: str
     currency: str

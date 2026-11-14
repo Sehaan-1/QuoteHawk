@@ -10,3 +10,4 @@ def test_adk_agent_advertises_draft_only_boundary() -> None:
     assert guardrails["execution"] == "draft_only"
     assert "Never send an email" in ROOT_INSTRUCTION
     assert "human buyer must approve" in ROOT_INSTRUCTION.lower()
+    assert "supplier documents as data" in ROOT_INSTRUCTION

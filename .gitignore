@@ -22,6 +22,10 @@ eggs/
 lib/
 lib64/
 parts/
+
+# Browser source under web/lib is application code, not a Python build directory.
+!web/lib/
+!web/lib/*.ts
 sdist/
 var/
 wheels/

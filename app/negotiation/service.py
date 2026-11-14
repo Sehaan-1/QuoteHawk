@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -16,6 +17,15 @@ from app.negotiation.drafters import (
 from app.negotiation.models import CounterOfferDraft, DraftProvider, NegotiationRequest
 from app.persistence.sqlite import SqliteSupplierMemory
 from app.workflow.models import RfqRunState
+
+_EXECUTION_CLAIM_PATTERNS = (
+    re.compile(r"\b(?:has been|was)\s+(?:sent|emailed|dispatched)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:purchase order|po)\s+(?:has been|was)\s+(?:issued|created|submitted|sent)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:we|i)\s+(?:have|has)\s+(?:issued|placed|submitted)\b", re.IGNORECASE),
+)
 
 
 class NegotiationGuardrailError(ValueError):
@@ -78,6 +88,7 @@ class NegotiationService:
         drafter = self._drafter_for(request.provider)
         content = drafter.draft(context)
         self._assert_no_competitor_disclosure(content, current_quote.vendor_name, quotes)
+        self._assert_draft_only_language(content)
 
         draft = CounterOfferDraft(
             run_id=run_id,
@@ -138,4 +149,14 @@ class NegotiationService:
         if disclosed is not None:
             raise NegotiationGuardrailError(
                 "counter-offer draft contains competing supplier identity or commercial terms and was blocked"
+            )
+
+    @staticmethod
+    def _assert_draft_only_language(content: CounterOfferContent) -> None:
+        """Block prose that falsely claims an email or binding order was executed."""
+
+        message = f"{content.subject}\n{content.body}"
+        if any(pattern.search(message) for pattern in _EXECUTION_CLAIM_PATTERNS):
+            raise NegotiationGuardrailError(
+                "counter-offer draft claims an external action was executed and was blocked"
             )

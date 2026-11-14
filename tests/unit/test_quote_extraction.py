@@ -29,3 +29,23 @@ def test_fixture_extractor_rejects_omitted_commercial_terms(requisition) -> None
 
     with pytest.raises(ValidationError, match="freight_cost"):
         FixtureQuoteExtractor().extract(raw_quote)
+
+
+def test_fixture_extractor_rejects_supplier_prompt_injection_fields(requisition) -> None:
+    raw_quote = json.dumps(
+        AdversarialSupplierSimulator(requisition).raw_quote(SupplierTactic.PROMPT_INJECTION)
+    )
+
+    with pytest.raises(ValidationError, match="supplier_instruction"):
+        FixtureQuoteExtractor().extract(raw_quote)
+
+
+def test_fixture_extractor_rejects_malformed_commercial_values(requisition) -> None:
+    raw_quote = json.dumps(
+        AdversarialSupplierSimulator(requisition).raw_quote(
+            SupplierTactic.MALFORMED_COMMERCIAL_DATA
+        )
+    )
+
+    with pytest.raises(ValidationError, match="freight_cost"):
+        FixtureQuoteExtractor().extract(raw_quote)

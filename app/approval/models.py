@@ -23,7 +23,7 @@ class ApprovalDecision(StrEnum):
 class BuyerApproval(BaseModel):
     """Buyer input required to resolve an awaiting-approval run."""
 
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
     buyer_id: str = Field(min_length=3, max_length=160)
     decision: ApprovalDecision
@@ -42,7 +42,7 @@ class BuyerApproval(BaseModel):
 class ApprovalRequest(BaseModel):
     """Safe approval-card payload for the future web/mobile client."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run: RfqRun
     eligible_quotes: tuple[QuoteScore, ...] = Field(min_length=1)
@@ -52,7 +52,7 @@ class ApprovalRequest(BaseModel):
 class ApprovalRecord(BaseModel):
     """Immutable buyer decision stored alongside the RFQ audit trail."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: str
     buyer_id: str
@@ -65,7 +65,7 @@ class ApprovalRecord(BaseModel):
 class PurchaseOrderLine(BaseModel):
     """A non-binding PO-draft line derived from validated requisition/quote data."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     sku: str
     description: str
@@ -76,7 +76,7 @@ class PurchaseOrderLine(BaseModel):
 class PurchaseOrderDraft(BaseModel):
     """A buyer-approved draft; it is intentionally not an executable order."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     draft_id: str
     run_id: str
@@ -98,7 +98,7 @@ class PurchaseOrderDraft(BaseModel):
 class ApprovalResult(BaseModel):
     """Result returned after the controlled approval/rejection transition."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     record: ApprovalRecord
     purchase_order_draft: PurchaseOrderDraft | None = None

@@ -29,7 +29,9 @@ identity or terms, or bypass buyer approval.
 - `app/ingestion/` validates fixture or Gemini output against `NormalizedQuote`
   before it can reach policy code.
 - `app/api/` exposes concise audit facts over REST/SSE; never stream chain of
-  thought or raw provider reasoning.
+  thought or raw provider reasoning. It emits only safe correlated operational
+  facts through `app/observability.py`; never add bodies, commercial values,
+  buyer identities, credentials, exception text, or model traces to logs.
 - `web/` is the Next.js buyer workspace. It must use relative `/api/rfq` URLs;
   `next.config.ts` owns the server-side local proxy. Preserve the explicit
   `draft_only` language and do not embed policy calculations in the UI.
@@ -39,7 +41,11 @@ identity or terms, or bypass buyer approval.
   do not copy its generated cache/build artifacts into source control.
 - `app/simulation/` generates adversarial supplier payloads. Extend it alongside
   deterministic regression tests whenever a new extraction or policy boundary is
-  introduced.
+  introduced. Reject prompt-injection fields and malformed commercial values at
+  the same Pydantic boundary used by optional Gemini output.
+- `docs/production-integration-contracts.md` defines future reverse-proxy,
+  identity, Postgres, vendor-mail, and ERP contracts. It must not be interpreted
+  as approval to add cloud resources or external execution capability.
 - `app/agent.py` is the optional Google ADK/Gemini boundary. Treat all model
   output as untrusted until Pydantic validates it.
 

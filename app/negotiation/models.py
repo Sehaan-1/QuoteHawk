@@ -20,7 +20,7 @@ class DraftProvider(StrEnum):
 class NegotiationRequest(BaseModel):
     """Buyer/policy supplied target, never raw competitor information."""
 
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
     vendor_id: str = Field(min_length=1, max_length=80)
     target_landed_cost: Decimal = Field(gt=0)
@@ -30,7 +30,7 @@ class NegotiationRequest(BaseModel):
 class CounterOfferDraft(BaseModel):
     """A reviewed email draft. It cannot be dispatched by QuoteHawk."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: str
     vendor_id: str

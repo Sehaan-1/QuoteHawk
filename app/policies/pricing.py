@@ -35,7 +35,7 @@ def _money(value: Decimal) -> Decimal:
 class ScoreWeights(BaseModel):
     """Weights for the explainable multi-vendor comparison matrix."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     landed_cost: Decimal = Field(default=Decimal("0.60"), ge=0, le=1)
     lead_time: Decimal = Field(default=Decimal("0.15"), ge=0, le=1)
@@ -52,7 +52,7 @@ class ScoreWeights(BaseModel):
 class PricingPolicy(BaseModel):
     """Configurable but deterministic rules for true landed cost."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     included_lead_time_days: int | None = Field(default=None, ge=0, le=365)
     lead_time_penalty_per_day: Decimal = Field(default=Decimal("0"), ge=0)

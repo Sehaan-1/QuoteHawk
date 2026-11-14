@@ -27,7 +27,7 @@ class AnomalySeverity(StrEnum):
 class SupplierQuoteBaseline(BaseModel):
     """Rolling commercial baseline calculated before the current bid is stored."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     vendor_id: str
     currency: str
@@ -43,7 +43,7 @@ class SupplierQuoteBaseline(BaseModel):
 class QuoteAnomaly(BaseModel):
     """One reproducible deviation between a bid and supplier history."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     quote_id: str
     vendor_id: str
