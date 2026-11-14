@@ -1,4 +1,4 @@
-"""Small persistence contracts so SQLite can later be replaced by Postgres."""
+"""Persistence contracts shared by the local SQLite and Postgres backends."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 
 
 class SupplierMemoryRepository(Protocol):
-    """Historical supplier data needed by policy and anomaly analysis."""
+    """Tenant-scoped historical supplier data needed by policy/anomaly analysis."""
 
     def record_observation(
         self, observation: SupplierObservation, *, tenant_id: str = DEFAULT_TENANT_ID
@@ -44,7 +44,7 @@ class SupplierMemoryRepository(Protocol):
 
 
 class RfqRunRepository(Protocol):
-    """Durable state/event persistence required by the explicit workflow."""
+    """Tenant-scoped durable state/event persistence for the explicit workflow."""
 
     def create_rfq_run(
         self,
@@ -63,12 +63,19 @@ class RfqRunRepository(Protocol):
         to_state: RfqRunState,
         event_type: str,
         reason: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
         details: Mapping[str, Any] | None = None,
         payload_patch: Mapping[str, Any] | None = None,
     ) -> RfqRun:
-        """Persist one valid state transition and audit event."""
+        """Persist one valid state transition and audit event for one tenant's run."""
 
-    def request_buyer_approval(self, *, run_id: str, eligible_quote_ids: tuple[str, ...]) -> RfqRun:
+    def request_buyer_approval(
+        self,
+        *,
+        run_id: str,
+        eligible_quote_ids: tuple[str, ...],
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> RfqRun:
         """Persist an approval pause after deterministic eligibility checks."""
 
     def complete_buyer_approval(
@@ -79,11 +86,38 @@ class RfqRunRepository(Protocol):
     ) -> RfqRun:
         """Atomically persist a buyer decision and optional non-binding draft."""
 
-    def approval_for(self, run_id: str) -> ApprovalRecord | None:
-        """Return the persisted buyer decision, if any."""
+    def approval_for(
+        self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> ApprovalRecord | None:
+        """Return the persisted buyer decision within a tenant, if any."""
 
-    def purchase_order_draft_for(self, run_id: str) -> PurchaseOrderDraft | None:
-        """Return the non-binding PO-draft payload, if approved."""
+    def purchase_order_draft_for(
+        self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> PurchaseOrderDraft | None:
+        """Return the non-binding PO-draft payload within a tenant, if approved."""
 
-    def audit_events_for(self, run_id: str) -> tuple[RfqAuditEvent, ...]:
-        """Return the ordered audit trail."""
+    def record_rfq_event(
+        self,
+        *,
+        run_id: str,
+        event_type: str,
+        reason: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Append a non-transition event for one tenant's RFQ run."""
+
+    def load_rfq_run(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> RfqRun:
+        """Load a tenant-owned RFQ run."""
+
+    def audit_events_for(
+        self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> tuple[RfqAuditEvent, ...]:
+        """Return the ordered tenant-owned audit trail."""
+
+    def payload_for(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
+        """Return the tenant-owned JSON-safe workflow snapshot."""
+
+
+class QuoteHawkRepository(SupplierMemoryRepository, RfqRunRepository, Protocol):
+    """Complete storage surface consumed by QuoteHawk services."""

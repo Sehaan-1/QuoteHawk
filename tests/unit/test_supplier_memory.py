@@ -6,6 +6,8 @@ import sqlite3
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from app.domain.models import SupplierObservation
 from app.persistence.sqlite import SqliteSupplierMemory
 
@@ -75,6 +77,24 @@ def test_supplier_memory_isolated_by_tenant_even_for_matching_vendor_and_quote_i
 
     assert acme is not None and acme.average_freight_cost == Decimal("100")
     assert globex is not None and globex.average_freight_cost == Decimal("220")
+
+
+def test_sqlite_run_reads_and_audit_streams_are_scoped_by_tenant(tmp_path) -> None:
+    memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
+    memory.create_rfq_run(
+        run_id="acme-run",
+        requisition_id="PR-ACME",
+        tenant_id="tenant-acme",
+        payload={},
+    )
+
+    assert memory.load_rfq_run("acme-run", tenant_id="tenant-acme").tenant_id == "tenant-acme"
+    assert len(memory.audit_events_for("acme-run", tenant_id="tenant-acme")) == 1
+    assert memory.audit_events_for("acme-run", tenant_id="tenant-globex") == ()
+    with pytest.raises(KeyError):
+        memory.load_rfq_run("acme-run", tenant_id="tenant-globex")
+    with pytest.raises(KeyError):
+        memory.payload_for("acme-run", tenant_id="tenant-globex")
 
 
 def test_sqlite_migrates_legacy_commercial_history_into_the_local_demo_tenant(tmp_path) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from collections.abc import Iterator
 from time import perf_counter
@@ -12,12 +11,13 @@ from typing import Never
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
+from psycopg.errors import UniqueViolation
 from pydantic import ValidationError
 
 from app.api.models import QuoteExtractionRequest, RfqRunDetail, RfqRunSubmission
 from app.approval.models import ApprovalRequest, ApprovalResult, BuyerApproval
 from app.approval.service import ApprovalError, ApprovalService, BuyerApprovalPolicy
-from app.auth.models import AuthenticatedPrincipal, Permission
+from app.auth.models import AuthenticatedPrincipal, AuthMode, Permission
 from app.auth.service import (
     AuthenticationError,
     AuthorizationError,
@@ -40,7 +40,8 @@ from app.observability import (
     record_event,
     reset_request_id,
 )
-from app.persistence.sqlite import SqliteSupplierMemory
+from app.persistence.factory import repository_from_environment
+from app.persistence.repository import QuoteHawkRepository
 from app.policies.pricing import PolicyViolation
 from app.workflow.engine import RfqWorkflow
 from app.workflow.models import RfqWorkflowResult
@@ -51,16 +52,14 @@ router = APIRouter(prefix="/api/rfq", tags=["rfq"])
 def configure_quotehawk_api(
     app: FastAPI,
     *,
-    memory: SqliteSupplierMemory | None = None,
+    memory: QuoteHawkRepository | None = None,
     buyer_policy: BuyerApprovalPolicy | None = None,
     authenticator: RequestAuthenticator | None = None,
 ) -> None:
     """Attach local services and safe local observability to a FastAPI app."""
 
     _configure_safe_api_observability(app)
-    configured_memory = memory or SqliteSupplierMemory(
-        os.getenv("QUOTEHAWK_DATABASE_PATH", "quotehawk.db")
-    )
+    configured_memory = memory or repository_from_environment()
     configured_buyer_policy = buyer_policy or BuyerApprovalPolicy.from_environment()
     app.state.quotehawk_memory = configured_memory
     app.state.quotehawk_workflow = RfqWorkflow(configured_memory)
@@ -155,7 +154,7 @@ def _services(request: Request) -> tuple[RfqWorkflow, ApprovalService, Negotiati
     )
 
 
-def _memory(request: Request) -> SqliteSupplierMemory:
+def _memory(request: Request) -> QuoteHawkRepository:
     _services(request)
     return request.app.state.quotehawk_memory
 
@@ -177,17 +176,23 @@ def _principal(
 
 
 def _assert_tenant_access(
-    memory: SqliteSupplierMemory,
+    memory: QuoteHawkRepository,
     run_id: str,
     principal: AuthenticatedPrincipal,
 ) -> None:
-    run = memory.load_rfq_run(run_id)
-    if run.tenant_id != principal.tenant_id:
-        raise AuthorizationError("identity is not authorized for this RFQ tenant")
+    try:
+        memory.load_rfq_run(run_id, tenant_id=principal.tenant_id)
+    except KeyError as error:
+        # Preserve the local prototype's useful missing-run response while OIDC
+        # callers receive a uniform tenant-denied result that does not reveal a
+        # cross-tenant run's existence.
+        if principal.auth_mode is AuthMode.PROTOTYPE:
+            raise
+        raise AuthorizationError("identity is not authorized for this RFQ tenant") from error
 
 
 def _raise_http_error(error: Exception) -> Never:
-    if isinstance(error, sqlite3.IntegrityError):
+    if isinstance(error, (sqlite3.IntegrityError, UniqueViolation)):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="RFQ run conflicts with an existing persisted record",
@@ -258,11 +263,13 @@ def get_rfq_run(run_id: str, request: Request) -> RfqRunDetail:
         principal = _principal(request, Permission.READ)
         _assert_tenant_access(memory, run_id, principal)
         detail = RfqRunDetail(
-            run=memory.load_rfq_run(run_id),
-            audit_events=memory.audit_events_for(run_id),
-            approval=memory.approval_for(run_id),
-            purchase_order_draft=memory.purchase_order_draft_for(run_id),
-            payload=memory.payload_for(run_id),
+            run=memory.load_rfq_run(run_id, tenant_id=principal.tenant_id),
+            audit_events=memory.audit_events_for(run_id, tenant_id=principal.tenant_id),
+            approval=memory.approval_for(run_id, tenant_id=principal.tenant_id),
+            purchase_order_draft=memory.purchase_order_draft_for(
+                run_id, tenant_id=principal.tenant_id
+            ),
+            payload=memory.payload_for(run_id, tenant_id=principal.tenant_id),
         )
     except Exception as error:
         _raise_http_error(error)
@@ -278,8 +285,8 @@ def stream_rfq_events(run_id: str, request: Request) -> StreamingResponse:
     try:
         principal = _principal(request, Permission.READ)
         _assert_tenant_access(memory, run_id, principal)
-        events = memory.audit_events_for(run_id)
-        if not events and memory.load_rfq_run(run_id):
+        events = memory.audit_events_for(run_id, tenant_id=principal.tenant_id)
+        if not events and memory.load_rfq_run(run_id, tenant_id=principal.tenant_id):
             raise KeyError(f"no audit events for RFQ run {run_id}")
     except Exception as error:
         _raise_http_error(error)
@@ -301,7 +308,7 @@ def open_approval_request(run_id: str, request: Request) -> ApprovalRequest:
     try:
         principal = _principal(request, Permission.APPROVE)
         _assert_tenant_access(_memory(request), run_id, principal)
-        approval_request = approvals.open_request(run_id)
+        approval_request = approvals.open_request(run_id, tenant_id=principal.tenant_id)
     except Exception as error:
         _raise_http_error(error)
     record_event(
@@ -357,7 +364,7 @@ def draft_counter_offer(
     try:
         principal = _principal(request, Permission.WRITE)
         _assert_tenant_access(_memory(request), run_id, principal)
-        draft = negotiation.draft(run_id, negotiation_request)
+        draft = negotiation.draft(run_id, negotiation_request, tenant_id=principal.tenant_id)
     except Exception as error:
         _raise_http_error(error)
     record_event(

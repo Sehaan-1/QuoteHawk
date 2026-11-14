@@ -486,7 +486,7 @@ class SqliteSupplierMemory:
                 reason="RFQ run accepted for deterministic processing.",
                 details={"requisition_id": requisition_id},
             )
-        return self.load_rfq_run(run_id)
+        return self.load_rfq_run(run_id, tenant_id=tenant_id)
 
     def advance_rfq_run(
         self,
@@ -495,6 +495,7 @@ class SqliteSupplierMemory:
         to_state: RfqRunState,
         event_type: str,
         reason: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
         details: Mapping[str, Any] | None = None,
         payload_patch: Mapping[str, Any] | None = None,
     ) -> RfqRun:
@@ -513,11 +514,18 @@ class SqliteSupplierMemory:
             to_state=to_state,
             event_type=event_type,
             reason=reason,
+            tenant_id=tenant_id,
             details=details,
             payload_patch=payload_patch,
         )
 
-    def request_buyer_approval(self, *, run_id: str, eligible_quote_ids: tuple[str, ...]) -> RfqRun:
+    def request_buyer_approval(
+        self,
+        *,
+        run_id: str,
+        eligible_quote_ids: tuple[str, ...],
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> RfqRun:
         """Persist the buyer-review pause after approval policy finds eligible quotes."""
 
         if not eligible_quote_ids:
@@ -527,6 +535,7 @@ class SqliteSupplierMemory:
             to_state=RfqRunState.AWAITING_APPROVAL,
             event_type="buyer_approval_requested",
             reason="Within-budget options are ready for an authorized buyer decision.",
+            tenant_id=tenant_id,
             details={
                 "eligible_quote_ids": list(eligible_quote_ids),
                 "execution_boundary": "draft_only",
@@ -540,6 +549,7 @@ class SqliteSupplierMemory:
         to_state: RfqRunState,
         event_type: str,
         reason: str,
+        tenant_id: str,
         details: Mapping[str, Any] | None = None,
         payload_patch: Mapping[str, Any] | None = None,
     ) -> RfqRun:
@@ -548,7 +558,11 @@ class SqliteSupplierMemory:
         now = _utc_now()
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT state, version, payload_json FROM rfq_runs WHERE run_id = ?", (run_id,)
+                """
+                SELECT state, version, payload_json FROM rfq_runs
+                WHERE run_id = ? AND tenant_id = ?
+                """,
+                (run_id, tenant_id),
             ).fetchone()
             if row is None:
                 raise KeyError(f"unknown RFQ run {run_id}")
@@ -561,7 +575,7 @@ class SqliteSupplierMemory:
                 """
                 UPDATE rfq_runs
                 SET state = ?, version = ?, updated_at = ?, payload_json = ?
-                WHERE run_id = ? AND version = ?
+                WHERE run_id = ? AND tenant_id = ? AND version = ?
                 """,
                 (
                     to_state.value,
@@ -569,6 +583,7 @@ class SqliteSupplierMemory:
                     now.isoformat(),
                     json.dumps(payload, sort_keys=True),
                     run_id,
+                    tenant_id,
                     version - 1,
                 ),
             )
@@ -585,7 +600,7 @@ class SqliteSupplierMemory:
                 reason=reason,
                 details=dict(details or {}),
             )
-        return self.load_rfq_run(run_id)
+        return self.load_rfq_run(run_id, tenant_id=tenant_id)
 
     def complete_buyer_approval(
         self,
@@ -624,12 +639,13 @@ class SqliteSupplierMemory:
         )
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT state, version, tenant_id, payload_json FROM rfq_runs WHERE run_id = ?",
-                (approval.run_id,),
+                """
+                SELECT state, version, payload_json FROM rfq_runs
+                WHERE run_id = ? AND tenant_id = ?
+                """,
+                (approval.run_id, approval.actor_tenant_id),
             ).fetchone()
             if row is None:
-                raise KeyError(f"unknown RFQ run {approval.run_id}")
-            if row["tenant_id"] != approval.actor_tenant_id:
                 raise PermissionError("identity is not authorized for this RFQ tenant")
             from_state = RfqRunState(row["state"])
             assert_transition(from_state, target_state)
@@ -695,7 +711,7 @@ class SqliteSupplierMemory:
                 """
                 UPDATE rfq_runs
                 SET state = ?, version = ?, updated_at = ?, payload_json = ?
-                WHERE run_id = ? AND version = ?
+                WHERE run_id = ? AND tenant_id = ? AND version = ?
                 """,
                 (
                     target_state.value,
@@ -703,6 +719,7 @@ class SqliteSupplierMemory:
                     approval.decided_at.isoformat(),
                     json.dumps(payload, sort_keys=True),
                     approval.run_id,
+                    approval.actor_tenant_id,
                     version - 1,
                 ),
             )
@@ -732,19 +749,24 @@ class SqliteSupplierMemory:
                     "execution_boundary": "draft_only",
                 },
             )
-        return self.load_rfq_run(approval.run_id)
+        return self.load_rfq_run(approval.run_id, tenant_id=approval.actor_tenant_id)
 
-    def approval_for(self, run_id: str) -> ApprovalRecord | None:
+    def approval_for(
+        self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> ApprovalRecord | None:
         """Return the immutable approval decision, when the buyer has decided."""
 
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT buyer_id, actor_subject, actor_tenant_id, authentication_method,
-                       decision, selected_quote_id, note, decided_at
-                FROM rfq_approvals WHERE run_id = ?
+                SELECT approval.buyer_id, approval.actor_subject, approval.actor_tenant_id,
+                       approval.authentication_method, approval.decision, approval.selected_quote_id,
+                       approval.note, approval.decided_at
+                FROM rfq_approvals AS approval
+                JOIN rfq_runs AS run ON run.run_id = approval.run_id
+                WHERE approval.run_id = ? AND run.tenant_id = ?
                 """,
-                (run_id,),
+                (run_id, tenant_id),
             ).fetchone()
         if row is None:
             return None
@@ -760,12 +782,20 @@ class SqliteSupplierMemory:
             decided_at=datetime.fromisoformat(row["decided_at"]),
         )
 
-    def purchase_order_draft_for(self, run_id: str) -> PurchaseOrderDraft | None:
+    def purchase_order_draft_for(
+        self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> PurchaseOrderDraft | None:
         """Return the persisted non-binding PO payload, never an ERP order."""
 
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT payload_json FROM purchase_order_drafts WHERE run_id = ?", (run_id,)
+                """
+                SELECT draft.payload_json
+                FROM purchase_order_drafts AS draft
+                JOIN rfq_runs AS run ON run.run_id = draft.run_id
+                WHERE draft.run_id = ? AND run.tenant_id = ?
+                """,
+                (run_id, tenant_id),
             ).fetchone()
         return PurchaseOrderDraft.model_validate_json(row["payload_json"]) if row else None
 
@@ -775,11 +805,18 @@ class SqliteSupplierMemory:
         run_id: str,
         event_type: str,
         reason: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
         details: Mapping[str, Any] | None = None,
     ) -> None:
         """Append a non-transition event, such as a deterministic workflow failure."""
 
         with self._connection() as connection:
+            run = connection.execute(
+                "SELECT 1 FROM rfq_runs WHERE run_id = ? AND tenant_id = ?",
+                (run_id, tenant_id),
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"unknown RFQ run {run_id}")
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) AS last_sequence FROM rfq_run_events WHERE run_id = ?",
                 (run_id,),
@@ -796,16 +833,16 @@ class SqliteSupplierMemory:
                 details=dict(details or {}),
             )
 
-    def load_rfq_run(self, run_id: str) -> RfqRun:
+    def load_rfq_run(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> RfqRun:
         """Load current state without exposing mutable persistence objects."""
 
         with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT run_id, requisition_id, tenant_id, state, version, created_at, updated_at
-                FROM rfq_runs WHERE run_id = ?
+                FROM rfq_runs WHERE run_id = ? AND tenant_id = ?
                 """,
-                (run_id,),
+                (run_id, tenant_id),
             ).fetchone()
         if row is None:
             raise KeyError(f"unknown RFQ run {run_id}")
@@ -819,16 +856,22 @@ class SqliteSupplierMemory:
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
-    def audit_events_for(self, run_id: str) -> tuple[RfqAuditEvent, ...]:
+    def audit_events_for(
+        self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID
+    ) -> tuple[RfqAuditEvent, ...]:
         """Load the ordered event stream used to explain an RFQ decision."""
 
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT sequence, occurred_at, event_type, from_state, to_state, reason, details_json
-                FROM rfq_run_events WHERE run_id = ? ORDER BY sequence ASC
+                SELECT event.sequence, event.occurred_at, event.event_type, event.from_state,
+                       event.to_state, event.reason, event.details_json
+                FROM rfq_run_events AS event
+                JOIN rfq_runs AS run ON run.run_id = event.run_id
+                WHERE event.run_id = ? AND run.tenant_id = ?
+                ORDER BY event.sequence ASC
                 """,
-                (run_id,),
+                (run_id, tenant_id),
             ).fetchall()
         return tuple(
             RfqAuditEvent(
@@ -844,12 +887,13 @@ class SqliteSupplierMemory:
             for row in rows
         )
 
-    def payload_for(self, run_id: str) -> dict[str, Any]:
+    def payload_for(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> dict[str, Any]:
         """Return a JSON-safe workflow snapshot for resume/debug tooling."""
 
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT payload_json FROM rfq_runs WHERE run_id = ?", (run_id,)
+                "SELECT payload_json FROM rfq_runs WHERE run_id = ? AND tenant_id = ?",
+                (run_id, tenant_id),
             ).fetchone()
         if row is None:
             raise KeyError(f"unknown RFQ run {run_id}")

@@ -15,7 +15,7 @@ from app.domain.models import (
     PurchaseRequisition,
     SupplierBaseline,
 )
-from app.persistence.sqlite import SqliteSupplierMemory
+from app.persistence.repository import QuoteHawkRepository
 from app.policies.pricing import PricingPolicy, compare_quotes
 from app.workflow.models import RfqRunState, RfqWorkflowResult
 
@@ -30,7 +30,7 @@ class RfqWorkflow:
 
     def __init__(
         self,
-        memory: SqliteSupplierMemory,
+        memory: QuoteHawkRepository,
         *,
         pricing_policy: PricingPolicy | None = None,
         anomaly_policy: AnomalyPolicy | None = None,
@@ -70,6 +70,7 @@ class RfqWorkflow:
                 to_state=RfqRunState.NORMALIZED,
                 event_type="quotes_normalized",
                 reason="Supplier quotes passed strict normalized-quote validation.",
+                tenant_id=tenant_id,
                 details={"quote_count": len(received_quotes)},
             )
 
@@ -81,6 +82,7 @@ class RfqWorkflow:
                 to_state=RfqRunState.ENRICHED_WITH_MEMORY,
                 event_type="supplier_memory_loaded",
                 reason="Historical supplier baselines loaded before current bids were stored.",
+                tenant_id=tenant_id,
                 details={"vendors_with_history": len(memory_payload)},
                 payload_patch={"supplier_memory": memory_payload},
             )
@@ -97,6 +99,7 @@ class RfqWorkflow:
                 to_state=RfqRunState.ANALYZED,
                 event_type="quotes_analyzed",
                 reason="Landed costs, weighted comparison, and supplier-history anomalies calculated.",
+                tenant_id=tenant_id,
                 details={
                     "anomaly_count": len(anomalies),
                     "approval_ready_quote_count": sum(
@@ -124,6 +127,7 @@ class RfqWorkflow:
                 to_state=RfqRunState.NEGOTIATION_OR_READY,
                 event_type="negotiation_or_readiness_determined",
                 reason=reason,
+                tenant_id=tenant_id,
                 details={
                     "approval_ready_quote_count": approval_ready_count,
                     "execution_boundary": "draft_only",
@@ -134,6 +138,7 @@ class RfqWorkflow:
                 run_id=run_id,
                 event_type="workflow_failed",
                 reason="Deterministic workflow processing stopped before completion.",
+                tenant_id=tenant_id,
                 details={"error_type": type(error).__name__},
             )
             raise
@@ -142,7 +147,7 @@ class RfqWorkflow:
             run=run,
             comparison=comparison,
             anomalies=anomalies,
-            audit_events=self.memory.audit_events_for(run_id),
+            audit_events=self.memory.audit_events_for(run_id, tenant_id=tenant_id),
         )
 
     def _load_memory(
