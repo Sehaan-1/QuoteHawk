@@ -24,6 +24,12 @@ from app.domain.models import (
     SupplierBaseline,
     SupplierObservation,
 )
+from app.persistence.repository import (
+    ConcurrentRunUpdateError,
+    IdempotencyConflictError,
+    RfqRunCreation,
+)
+from app.persistence.sqlite_migrations import migrate_sqlite_schema
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 from app.workflow.state_machine import InvalidStateTransition, assert_transition
 
@@ -57,6 +63,10 @@ class SqliteSupplierMemory:
         connection.execute("PRAGMA foreign_keys = ON")
         try:
             yield connection
+        except Exception:
+            connection.rollback()
+            raise
+        else:
             connection.commit()
         finally:
             connection.close()
@@ -106,7 +116,9 @@ class SqliteSupplierMemory:
                     version INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    payload_json TEXT NOT NULL
+                    payload_json TEXT NOT NULL,
+                    idempotency_key TEXT,
+                    request_fingerprint TEXT
                 )
                 """
             )
@@ -153,7 +165,7 @@ class SqliteSupplierMemory:
                 )
                 """
             )
-            self._migrate_identity_schema(connection)
+            migrate_sqlite_schema(connection)
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_supplier_observations_tenant_vendor_currency
@@ -166,108 +178,6 @@ class SqliteSupplierMemory:
                 ON supplier_quote_history (tenant_id, vendor_id, currency, observed_on)
                 """
             )
-
-    @staticmethod
-    def _has_column(connection: sqlite3.Connection, table_name: str, column_name: str) -> bool:
-        return any(
-            row["name"] == column_name
-            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-        )
-
-    @classmethod
-    def _migrate_identity_schema(cls, connection: sqlite3.Connection) -> None:
-        """Upgrade local PR-5 databases without mixing tenant commercial history."""
-
-        if not cls._has_column(connection, "supplier_observations", "tenant_id"):
-            connection.execute(
-                "ALTER TABLE supplier_observations RENAME TO supplier_observations_legacy"
-            )
-            connection.execute(
-                """
-                CREATE TABLE supplier_observations (
-                    tenant_id TEXT NOT NULL,
-                    vendor_id TEXT NOT NULL,
-                    quote_id TEXT NOT NULL,
-                    observed_on TEXT NOT NULL,
-                    currency TEXT NOT NULL,
-                    average_unit_price TEXT NOT NULL,
-                    freight_cost TEXT NOT NULL,
-                    delivery_delay_days INTEGER NOT NULL,
-                    responsiveness_score TEXT NOT NULL,
-                    discount_margin TEXT NOT NULL,
-                    PRIMARY KEY (tenant_id, vendor_id, quote_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO supplier_observations (
-                    tenant_id, vendor_id, quote_id, observed_on, currency, average_unit_price,
-                    freight_cost, delivery_delay_days, responsiveness_score, discount_margin
-                )
-                SELECT ?, vendor_id, quote_id, observed_on, currency, average_unit_price,
-                       freight_cost, delivery_delay_days, responsiveness_score, discount_margin
-                FROM supplier_observations_legacy
-                """,
-                (DEFAULT_TENANT_ID,),
-            )
-            connection.execute("DROP TABLE supplier_observations_legacy")
-
-        if not cls._has_column(connection, "supplier_quote_history", "tenant_id"):
-            connection.execute(
-                "ALTER TABLE supplier_quote_history RENAME TO supplier_quote_history_legacy"
-            )
-            connection.execute(
-                """
-                CREATE TABLE supplier_quote_history (
-                    tenant_id TEXT NOT NULL,
-                    vendor_id TEXT NOT NULL,
-                    quote_id TEXT NOT NULL,
-                    observed_on TEXT NOT NULL,
-                    currency TEXT NOT NULL,
-                    average_unit_price TEXT NOT NULL,
-                    freight_cost TEXT NOT NULL,
-                    lead_time_days INTEGER NOT NULL,
-                    payment_term_days INTEGER NOT NULL,
-                    PRIMARY KEY (tenant_id, vendor_id, quote_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO supplier_quote_history (
-                    tenant_id, vendor_id, quote_id, observed_on, currency, average_unit_price,
-                    freight_cost, lead_time_days, payment_term_days
-                )
-                SELECT ?, vendor_id, quote_id, observed_on, currency, average_unit_price,
-                       freight_cost, lead_time_days, payment_term_days
-                FROM supplier_quote_history_legacy
-                """,
-                (DEFAULT_TENANT_ID,),
-            )
-            connection.execute("DROP TABLE supplier_quote_history_legacy")
-
-        if not cls._has_column(connection, "rfq_runs", "tenant_id"):
-            connection.execute(
-                "ALTER TABLE rfq_runs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local-demo'"
-            )
-        if not cls._has_column(connection, "rfq_approvals", "actor_subject"):
-            connection.execute(
-                "ALTER TABLE rfq_approvals "
-                "ADD COLUMN actor_subject TEXT NOT NULL DEFAULT 'prototype-legacy'"
-            )
-            # Old approvals were made through the local buyer-ID field. Preserve
-            # that known legacy actor instead of labeling every decision identically.
-            connection.execute("UPDATE rfq_approvals SET actor_subject = buyer_id")
-        approval_columns = (
-            ("actor_tenant_id", "TEXT NOT NULL DEFAULT 'local-demo'"),
-            ("authentication_method", "TEXT NOT NULL DEFAULT 'prototype'"),
-        )
-        for column_name, declaration in approval_columns:
-            if not cls._has_column(connection, "rfq_approvals", column_name):
-                connection.execute(
-                    f"ALTER TABLE rfq_approvals ADD COLUMN {column_name} {declaration}"
-                )
 
     def record_observation(
         self, observation: SupplierObservation, *, tenant_id: str = DEFAULT_TENANT_ID
@@ -455,38 +365,105 @@ class SqliteSupplierMemory:
     ) -> RfqRun:
         """Create an intake run and its first immutable audit event."""
 
+        creation = self.create_or_retrieve_rfq_run(
+            run_id=run_id,
+            requisition_id=requisition_id,
+            tenant_id=tenant_id,
+            payload=payload,
+        )
+        if not creation.created:
+            raise sqlite3.IntegrityError(f"RFQ run {run_id} already exists")
+        return creation.run
+
+    def create_or_retrieve_rfq_run(
+        self,
+        *,
+        run_id: str,
+        requisition_id: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        payload: Mapping[str, Any],
+        idempotency_key: str | None = None,
+        request_fingerprint: str | None = None,
+    ) -> RfqRunCreation:
+        """Atomically create a run or return the existing tenant/idempotency row."""
+
+        if (idempotency_key is None) != (request_fingerprint is None):
+            raise ValueError("idempotency key and request fingerprint must be supplied together")
         now = _utc_now()
         payload_json = json.dumps(dict(payload), sort_keys=True)
+        existing_run_id: str | None = None
+        existing_fingerprint: str | None = None
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO rfq_runs (
-                    run_id, requisition_id, tenant_id, state, version, created_at, updated_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    run_id,
-                    requisition_id,
-                    tenant_id,
-                    RfqRunState.INTAKE.value,
-                    0,
-                    now.isoformat(),
-                    now.isoformat(),
-                    payload_json,
-                ),
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO rfq_runs (
+                        run_id, requisition_id, tenant_id, state, version, created_at, updated_at,
+                        payload_json, idempotency_key, request_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        requisition_id,
+                        tenant_id,
+                        RfqRunState.INTAKE.value,
+                        0,
+                        now.isoformat(),
+                        now.isoformat(),
+                        payload_json,
+                        idempotency_key,
+                        request_fingerprint,
+                    ),
+                )
+                created = True
+            except sqlite3.IntegrityError:
+                if idempotency_key is None:
+                    raise
+                existing = connection.execute(
+                    """
+                    SELECT run_id, request_fingerprint FROM rfq_runs
+                    WHERE tenant_id = ? AND idempotency_key = ?
+                    """,
+                    (tenant_id, idempotency_key),
+                ).fetchone()
+                if existing is None:
+                    raise
+                created = False
+                existing_run_id = existing["run_id"]
+                existing_fingerprint = existing["request_fingerprint"]
+                if existing_fingerprint != request_fingerprint:
+                    raise IdempotencyConflictError(
+                        "idempotency key was already used for a different RFQ submission"
+                    ) from None
+            if created:
+                self._insert_event(
+                    connection,
+                    run_id=run_id,
+                    sequence=1,
+                    occurred_at=now,
+                    event_type="run_created",
+                    from_state=None,
+                    to_state=RfqRunState.INTAKE,
+                    reason="RFQ run accepted for deterministic processing.",
+                    details={"requisition_id": requisition_id},
+                )
+        if not created:
+            return RfqRunCreation(
+                run=self.load_rfq_run(existing_run_id or run_id, tenant_id=tenant_id),
+                created=False,
+                request_fingerprint=existing_fingerprint,
             )
-            self._insert_event(
-                connection,
-                run_id=run_id,
-                sequence=1,
-                occurred_at=now,
-                event_type="run_created",
-                from_state=None,
-                to_state=RfqRunState.INTAKE,
-                reason="RFQ run accepted for deterministic processing.",
-                details={"requisition_id": requisition_id},
-            )
-        return self.load_rfq_run(run_id, tenant_id=tenant_id)
+        return RfqRunCreation(
+            run=self.load_rfq_run(run_id, tenant_id=tenant_id),
+            created=True,
+            request_fingerprint=request_fingerprint,
+        )
+
+    def readiness_check(self) -> None:
+        """Check local SQLite readability without returning workflow data."""
+
+        with self._connection() as connection:
+            connection.execute("SELECT 1 FROM rfq_runs LIMIT 1").fetchone()
 
     def advance_rfq_run(
         self,
@@ -588,7 +565,9 @@ class SqliteSupplierMemory:
                 ),
             )
             if updated.rowcount != 1:
-                raise RuntimeError("RFQ run changed concurrently; retry from persisted state")
+                raise ConcurrentRunUpdateError(
+                    "RFQ run changed concurrently; retry from persisted state"
+                )
             self._insert_event(
                 connection,
                 run_id=run_id,
@@ -724,7 +703,9 @@ class SqliteSupplierMemory:
                 ),
             )
             if updated.rowcount != 1:
-                raise RuntimeError("RFQ run changed concurrently; retry from persisted state")
+                raise ConcurrentRunUpdateError(
+                    "RFQ run changed concurrently; retry from persisted state"
+                )
             self._insert_event(
                 connection,
                 run_id=approval.run_id,
