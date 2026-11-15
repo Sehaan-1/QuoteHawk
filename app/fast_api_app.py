@@ -14,7 +14,7 @@
 
 import contextlib
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 from a2a.server.tasks import InMemoryTaskStore
 from dotenv import load_dotenv
@@ -37,7 +37,7 @@ AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.agent import app as adk_app
     from app.agent import root_agent
 

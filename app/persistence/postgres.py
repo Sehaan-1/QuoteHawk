@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -82,8 +82,8 @@ def _migration_statements(path: Path | None = None) -> tuple[str, ...]:
     return tuple(statement.strip() for statement in migration.split(";") if statement.strip())
 
 
-def _default_connection(dsn: str) -> Any:
-    return psycopg.connect(dsn, row_factory=dict_row)
+def _default_connection(dsn: str) -> psycopg.Connection[dict[str, Any]]:
+    return psycopg.Connection[dict[str, Any]].connect(dsn, row_factory=dict_row)
 
 
 class PostgresSupplierMemory:
@@ -107,7 +107,7 @@ class PostgresSupplierMemory:
         self._connection_factory = connection_factory or _default_connection
 
     @contextmanager
-    def _tenant_connection(self, tenant_id: str) -> Iterator[Any]:
+    def _tenant_connection(self, tenant_id: str) -> Generator[Any, None, None]:
         if not tenant_id.strip():
             raise ValueError("tenant ID must not be empty")
         connection = self._connection_factory(self.dsn)
@@ -121,7 +121,7 @@ class PostgresSupplierMemory:
             connection.close()
 
     @contextmanager
-    def _schema_connection(self) -> Iterator[Any]:
+    def _schema_connection(self) -> Generator[Any, None, None]:
         connection = self._connection_factory(self.dsn)
         try:
             with connection.transaction():
