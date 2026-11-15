@@ -26,6 +26,9 @@ from app.api.routes import close_quotehawk_api_persistence, configure_quotehawk_
 from app.api.routes import router as quotehawk_router
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
+from app.approval.service import BuyerApprovalPolicy
+from app.auth.service import RequestAuthenticator
+from app.persistence.repository import QuoteHawkRepository
 
 load_dotenv()
 configured_allow_origins = os.getenv("ALLOW_ORIGINS")
@@ -67,19 +70,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         close_quotehawk_api_persistence(app)
 
 
-app: FastAPI = get_fast_api_app(
-    agents_dir=AGENT_DIR,
-    web=True,
-    artifact_service_uri=services.ARTIFACT_SERVICE_URI,
-    allow_origins=allow_origins,
-    session_service_uri=services.SESSION_SERVICE_URI,
-    otel_to_cloud=otel_to_cloud,
-    lifespan=lifespan,
-)
-app.title = "quotehawk"
-app.description = "Draft-only RFQ workflow and approval API for QuoteHawk"
-configure_quotehawk_api(app)
-app.include_router(quotehawk_router)
+def create_quotehawk_app(
+    *,
+    memory: QuoteHawkRepository | None = None,
+    buyer_policy: BuyerApprovalPolicy | None = None,
+    authenticator: RequestAuthenticator | None = None,
+) -> FastAPI:
+    """Build QuoteHawk's production-shaped FastAPI application.
+
+    Optional service injection is reserved for credential-free integration tests;
+    the module-level application always obtains its configured production-shaped
+    dependencies from the environment.
+    """
+
+    api_app = get_fast_api_app(
+        agents_dir=AGENT_DIR,
+        web=True,
+        artifact_service_uri=services.ARTIFACT_SERVICE_URI,
+        allow_origins=allow_origins,
+        session_service_uri=services.SESSION_SERVICE_URI,
+        otel_to_cloud=otel_to_cloud,
+        lifespan=lifespan,
+    )
+    api_app.title = "quotehawk"
+    api_app.description = "Draft-only RFQ workflow and approval API for QuoteHawk"
+    configure_quotehawk_api(
+        api_app,
+        memory=memory,
+        buyer_policy=buyer_policy,
+        authenticator=authenticator,
+    )
+    api_app.include_router(quotehawk_router)
+    return api_app
+
+
+app = create_quotehawk_app()
 
 
 # Main execution
