@@ -7,6 +7,8 @@ models, but business policy only receives validated objects. Monetary values use
 
 from __future__ import annotations
 
+import unicodedata
+from collections.abc import Iterable
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -130,6 +132,27 @@ class NormalizedQuote(BaseModel):
         if len(skus) != len(set(skus)):
             raise ValueError("quote line SKUs must be unique")
         return self
+
+
+def assert_unique_quote_identities(quotes: Iterable[NormalizedQuote]) -> None:
+    """Reject ambiguous supplier options before scoring, approval, or persistence.
+
+    A duplicate quote ID can make a persisted score point at a different payload,
+    while duplicate vendor IDs can make a counter-offer target ambiguous. This
+    prototype therefore accepts one normalized bid per stable supplier identity.
+    """
+
+    quote_ids: set[str] = set()
+    vendor_ids: set[str] = set()
+    for quote in quotes:
+        quote_id = unicodedata.normalize("NFKC", quote.quote_id).casefold()
+        vendor_id = unicodedata.normalize("NFKC", quote.vendor_id).casefold()
+        if quote_id in quote_ids:
+            raise ValueError("quote IDs must be unique within an RFQ submission")
+        if vendor_id in vendor_ids:
+            raise ValueError("vendor IDs must be unique within an RFQ submission")
+        quote_ids.add(quote_id)
+        vendor_ids.add(vendor_id)
 
 
 class LandedCostBreakdown(BaseModel):
