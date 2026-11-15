@@ -1,8 +1,16 @@
 # QuoteHawk mobile approval companion
 
-The Expo companion intentionally covers one job: a buyer can load a persisted
-RFQ, inspect in-budget choices, and approve a **non-binding** PO draft or reject
-the RFQ outcome. It has no send, purchase, supplier-contact, or ERP capability.
+The Expo companion is a focused buyer-review surface, not a reduced copy of the
+web dashboard. A procurement manager can load a durable RFQ, page through **every**
+ranked bid in five-bid review surfaces, inspect its deterministic landed-cost/FX
+breakdown, read the persisted policy audit trail, open the buyer gate, and confirm an approve, documented
+eligible-bid override, or reject decision. Approval supports swipe-right or tap,
+but always shows a native confirmation before recording a decision.
+
+The app retains at most five opaque recently opened run IDs locally for convenience.
+It never stores quotes, buyer IDs, access tokens, supplier documents, or decision
+notes. It has no send, purchase, supplier-contact, or ERP capability; every
+successful approval creates a **non-binding** `draft_only` PO payload.
 
 ## Run locally
 
