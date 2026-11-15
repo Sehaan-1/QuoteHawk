@@ -51,6 +51,59 @@ def _submission(requisition, *, run_id: str) -> dict[str, object]:
     }
 
 
+def _source_email_document(*, quote_id: str, vendor_id: str, vendor_name: str) -> dict[str, str]:
+    return {
+        "source": "email",
+        "content": f"""Quote ID: {quote_id}
+Requisition ID: PR-1001
+Vendor ID: {vendor_id}
+Vendor Name: {vendor_name}
+Currency: USD
+Freight Cost: USD 100.00
+Shipping Cost: USD 35.00
+Duties Cost: USD 50.00
+Lead Time Days: 7 days
+Payment Terms: Net 60
+MOQ: 100
+Line Item: FILTER-10 | 100 | USD 10.00
+Supplier note: RAW-SUPPLIER-ARTIFACT-MUST-NOT-PERSIST
+""",
+    }
+
+
+def _source_submission(*, run_id: str) -> dict[str, object]:
+    return {
+        "requisition": {
+            "requisition_id": "PR-1001",
+            "currency": "USD",
+            "items": [
+                {
+                    "sku": "FILTER-10",
+                    "description": "Industrial filter cartridge",
+                    "quantity": "100",
+                    "unit_of_measure": "each",
+                }
+            ],
+            "max_landed_cost": "1400.00",
+            "target_lead_time_days": 7,
+        },
+        "supplier_documents": [
+            _source_email_document(
+                quote_id="SOURCE-ALPHA", vendor_id="source-alpha", vendor_name="Source Alpha"
+            ),
+            _source_email_document(
+                quote_id="SOURCE-BRAVO", vendor_id="source-bravo", vendor_name="Source Bravo"
+            ),
+            _source_email_document(
+                quote_id="SOURCE-COPPER", vendor_id="source-copper", vendor_name="Source Copper"
+            ),
+        ],
+        "provider": "rule_based",
+        "observed_on": date(2026, 11, 14).isoformat(),
+        "run_id": run_id,
+    }
+
+
 def test_api_requires_an_explicit_key_before_selecting_gemini(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
@@ -62,6 +115,16 @@ def test_api_requires_an_explicit_key_before_selecting_gemini(tmp_path, monkeypa
 
     assert response.status_code == 409
     assert "requires GOOGLE_API_KEY or GEMINI_API_KEY" in response.json()["detail"]
+
+
+def test_api_requires_source_runs_for_rule_based_document_extraction(tmp_path) -> None:
+    response = _client(tmp_path).post(
+        "/api/rfq/extract",
+        json={"provider": "rule_based", "raw_quote": "Quote ID: a supplier email"},
+    )
+
+    assert response.status_code == 409
+    assert "source-runs endpoint" in response.json()["detail"]
 
 
 def test_api_rejects_injection_and_malformed_fixture_content_without_echoing_it(
@@ -196,6 +259,46 @@ def test_api_idempotency_key_replays_or_rejects_changed_input(requisition, tmp_p
     assert "different RFQ submission" in conflict.json()["detail"]
     assert malformed_key.status_code == 400
     assert "Idempotency-Key" in malformed_key.json()["detail"]
+
+
+def test_api_normalizes_three_supplier_source_documents_without_persisting_raw_content(
+    tmp_path,
+) -> None:
+    client = _client(tmp_path)
+    submission = _source_submission(run_id="source-run")
+    headers = {"Idempotency-Key": "source-idempotency-key-0001"}
+
+    created = client.post("/api/rfq/source-runs", json=submission, headers=headers)
+    replay = client.post("/api/rfq/source-runs", json=submission, headers=headers)
+    detail = client.get("/api/rfq/runs/source-run")
+    changed = _source_submission(run_id="other-source-run")
+    changed_documents = changed["supplier_documents"]
+    assert isinstance(changed_documents, list)
+    changed_first_document = changed_documents[0]
+    assert isinstance(changed_first_document, dict)
+    changed_content = changed_first_document["content"]
+    assert isinstance(changed_content, str)
+    changed_first_document["content"] = f"{changed_content}Changed raw source artifact.\n"
+    changed_key_conflict = client.post("/api/rfq/source-runs", json=changed, headers=headers)
+    too_few = _source_submission(run_id="too-few-source-run")
+    too_few_documents = too_few["supplier_documents"]
+    assert isinstance(too_few_documents, list)
+    too_few["supplier_documents"] = too_few_documents[:2]
+    too_few_response = client.post("/api/rfq/source-runs", json=too_few)
+
+    assert created.status_code == 201
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+    assert [quote["source"] for quote in detail.json()["payload"]["quotes"]] == [
+        "email",
+        "email",
+        "email",
+    ]
+    first_score = created.json()["comparison"]["ranked_quotes"][0]
+    assert first_score["landed_cost"]["shipping_cost"] == "35.00"
+    assert "RAW-SUPPLIER-ARTIFACT-MUST-NOT-PERSIST" not in detail.text
+    assert changed_key_conflict.status_code == 409
+    assert too_few_response.status_code == 422
 
 
 def test_api_readiness_and_resume_controls(requisition, tmp_path) -> None:

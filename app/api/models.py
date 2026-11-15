@@ -13,6 +13,7 @@ from app.domain.models import (
     PurchaseRequisition,
     assert_unique_quote_identities,
 )
+from app.ingestion.documents import SupplierQuoteDocument
 from app.ingestion.extractors import ExtractionProvider
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqWorkflowResult
 
@@ -31,6 +32,23 @@ class RfqRunSubmission(BaseModel):
     def require_unique_quote_identities(self) -> RfqRunSubmission:
         assert_unique_quote_identities(self.quotes)
         return self
+
+
+class RfqSourceRunSubmission(BaseModel):
+    """A three-to-five-bid RFQ submitted as source artifacts, not prebuilt quotes.
+
+    The API hashes source material for idempotency but only persists the resulting
+    normalized quotes and policy output. Raw emails, CSV bodies, and PDF data are
+    not retained in RFQ snapshots or application logs.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    requisition: PurchaseRequisition
+    supplier_documents: tuple[SupplierQuoteDocument, ...] = Field(min_length=3, max_length=5)
+    provider: ExtractionProvider = ExtractionProvider.RULE_BASED
+    observed_on: date | None = None
+    run_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class RfqRunDetail(BaseModel):
@@ -58,5 +76,6 @@ __all__ = [
     "QuoteExtractionRequest",
     "RfqRunDetail",
     "RfqRunSubmission",
+    "RfqSourceRunSubmission",
     "RfqWorkflowResult",
 ]

@@ -7,7 +7,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.domain.models import NormalizedQuote, PaymentTerms, QuoteLine, QuoteSource
+from app.domain.models import (
+    NormalizedQuote,
+    PaymentTerms,
+    QuoteLine,
+    QuoteSource,
+    persisted_quote_from_payload,
+)
 from app.policies.pricing import (
     PolicyViolation,
     PricingPolicy,
@@ -41,6 +47,17 @@ def test_landed_cost_includes_hidden_commercial_costs(requisition) -> None:
     assert result.total_landed_cost == Decimal("1380.00")
 
 
+def test_landed_cost_includes_shipping_as_a_separate_required_fee(requisition) -> None:
+    quote = make_quote(freight_cost="100.00", shipping_cost="35.00", duties_cost="50.00")
+
+    result = calculate_landed_cost(requisition, quote, PricingPolicy())
+
+    assert result.freight_cost == Decimal("100.00")
+    assert result.shipping_cost == Decimal("35.00")
+    assert result.duties_cost == Decimal("50.00")
+    assert result.total_landed_cost == Decimal("1185.00")
+
+
 def test_over_budget_bid_is_visible_but_not_approval_ready(requisition) -> None:
     quote = make_quote(quote_id="Q-OVER", freight_cost="500.00")
 
@@ -67,6 +84,7 @@ def test_missing_freight_is_a_schema_failure_not_a_free_fee() -> None:
         "source": QuoteSource.EMAIL,
         "currency": "USD",
         "lines": [{"sku": "FILTER-10", "quoted_quantity": "100", "unit_price": "10.00"}],
+        "shipping_cost": "0.00",
         "duties_cost": "0.00",
         "lead_time_days": 7,
         "payment_terms": PaymentTerms.NET_30,
@@ -74,6 +92,23 @@ def test_missing_freight_is_a_schema_failure_not_a_free_fee() -> None:
 
     with pytest.raises(ValidationError, match="freight_cost"):
         NormalizedQuote.model_validate(payload)
+
+
+def test_missing_shipping_is_a_schema_failure_not_a_free_fee() -> None:
+    payload = make_quote().model_dump(mode="json")
+    del payload["shipping_cost"]
+
+    with pytest.raises(ValidationError, match="shipping_cost"):
+        NormalizedQuote.model_validate(payload)
+
+
+def test_legacy_persisted_quote_can_resume_with_zero_separate_shipping() -> None:
+    legacy_payload = make_quote().model_dump(mode="json")
+    del legacy_payload["shipping_cost"]
+
+    quote = persisted_quote_from_payload(legacy_payload)
+
+    assert quote.shipping_cost == Decimal("0")
 
 
 def test_negative_supplier_fee_is_rejected_before_policy_runs() -> None:

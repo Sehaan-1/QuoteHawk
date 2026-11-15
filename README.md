@@ -14,8 +14,10 @@ approval gate.
 Tail-spend sourcing is often trapped in supplier emails, PDFs, and spreadsheets.
 QuoteHawk is designed around the control points a production agent needs:
 
-- strict Pydantic contracts around untrusted supplier data;
-- `Decimal`-based landed-cost math rather than opaque model calculations;
+- strict Pydantic contracts around untrusted supplier data, including three-to-five
+  CSV, email-text, or PDF quote artifacts;
+- `Decimal`-based landed-cost math rather than opaque model calculations, with
+  unit price, freight, shipping, duties, lead-time, MOQ, and payment-term effects;
 - SQLite supplier memory that persists price, freight, delivery, responsiveness,
   and discount observations across runs;
 - an explainable weighted multi-bid comparison that cannot select an over-budget
@@ -23,7 +25,7 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestones — PRs 7–11
+## Current milestones — PRs 7–12
 
 The prototype now includes a production-oriented Postgres persistence path,
 retry-safe durable workflow controls, adversarial policy hardening, and audited
@@ -49,21 +51,28 @@ earlier API identity boundaries:
 - unique RFQ bid identities plus adversarial checks for nested schema injection,
   straightforward competitor-disclosure obfuscation, and false execution claims;
 - current audited client dependencies: Next.js 16 for the buyer workspace and Expo
-  SDK 58 with validated web/Android companion exports; and
+  SDK 58 with validated web/Android companion exports;
+- a source-ingestion API for three-to-five CSV, unstructured-email, and PDF
+  supplier artifacts, retaining normalized facts rather than raw documents; and
 - a non-root local runtime container, liveness endpoint, reverse-proxy contract,
   and explicit production identity/Postgres/vendor-mail/ERP integration contracts.
 
 `QUOTEHAWK_AUTH_MODE=prototype` remains a local fixture/demo fallback only. Set
 `QUOTEHAWK_AUTH_MODE=oidc` with the documented issuer, audience, and HTTPS JWKS
 configuration to require verified identities. QuoteHawk verifies tokens; it does
-not host an OAuth login or provision an identity provider. Real document ingestion,
-vendor email, ERP execution, cloud deployment, and binding PO capability remain
-out of scope.
+not host an OAuth login or provision an identity provider. Raw supplier-source ingestion is local and request-scoped; vendor mailbox
+integration, OCR infrastructure, vendor email, ERP execution, cloud deployment,
+and binding PO capability remain out of scope. See the
+[supplier source-ingestion contract](docs/supplier-source-ingestion.md) for the
+supported CSV, email, and PDF request formats.
 
 ## Architecture
 
 ```text
-fixture JSON or optional Gemini structured extraction
+CSV, plain-email, or PDF supplier artifact
+                   |
+                   v
+rule-based parser or optional Gemini structured extraction
                    |
                    v
        strict Pydantic NormalizedQuote
@@ -99,7 +108,7 @@ scaffolded with [Google agents-cli](https://github.com/google/agents-cli) 1.14.0
 uv tool install google-agents-cli
 
 # dependencies (including test dependencies)
-uv sync --all-groups
+uv sync --all-groups --all-extras
 
 # credential-free deterministic tests
 uv run pytest
@@ -199,8 +208,10 @@ has an MIT notice in `web/THIRD_PARTY_NOTICES.md`.
 ## agents-cli workflow
 
 ```bash
-# inspect project metadata
+# inspect the agents-cli scaffold metadata and run its Python quality gate
 agents-cli info
+agents-cli lint
+agents-cli build
 
 # run the credentialed Gemini/ADK evaluation loop after configuring a local key
 agents-cli eval run
@@ -251,6 +262,16 @@ are explicitly approved.
 9. **Adversarial policy hardening** — complete: unique RFQ bid identities,
    nested-schema injection coverage, presentation-normalized competitor disclosure
    blocking, broader false-execution claims, and credentialed safety-eval fixtures.
+10. **Prototype quality and runtime validation** — complete: offline deterministic
+    regression, static client export, proxy contract, packaging, and safe-runtime
+    validation are documented without claiming unavailable cloud/container checks.
+11. **Client dependency security** — complete: the Next.js buyer workspace and
+    Expo companion use audited current dependency trees with zero production audit
+    findings.
+12. **Supplier source ingestion and complete landed cost** — complete: a bounded
+    three-to-five-document CSV/email/PDF RFQ input normalizes without retaining
+    raw artifacts; freight, shipping, duties, lead time, MOQ, and payment terms
+    are explicit deterministic cost components.
 
 ## Project layout
 
@@ -261,7 +282,7 @@ app/
   analysis/                # rolling baselines and deterministic anomaly detector
   approval/                # allowlisted buyer gate and PO draft models
   api/                     # REST/SSE routes that emit audit facts only
-  ingestion/               # fixture and optional Gemini structured extraction
+  ingestion/               # fixture, CSV/email/PDF, and optional Gemini extraction
   negotiation/             # confidential fixture/Gemini counter-offer drafts
   policies/pricing.py      # deterministic landed-cost and ranking policy
   persistence/             # SQLite demo backend, Postgres repository, and reviewed migrations

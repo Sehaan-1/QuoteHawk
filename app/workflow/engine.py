@@ -16,6 +16,7 @@ from app.domain.models import (
     QuoteComparison,
     SupplierBaseline,
     assert_unique_quote_identities,
+    persisted_quote_from_payload,
 )
 from app.persistence.repository import (
     ConcurrentRunUpdateError,
@@ -241,7 +242,7 @@ class RfqWorkflow:
         self, run_id: str, tenant_id: str
     ) -> tuple[PurchaseRequisition, tuple[NormalizedQuote, ...], date]:
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
-        quotes = tuple(NormalizedQuote.model_validate(item) for item in payload["quotes"])
+        quotes = tuple(persisted_quote_from_payload(item) for item in payload["quotes"])
         assert_unique_quote_identities(quotes)
         return (
             PurchaseRequisition.model_validate(payload["requisition"]),

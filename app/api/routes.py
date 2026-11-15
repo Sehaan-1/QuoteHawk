@@ -16,7 +16,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from psycopg.errors import UniqueViolation
 from pydantic import ValidationError
 
-from app.api.models import QuoteExtractionRequest, RfqRunDetail, RfqRunSubmission
+from app.api.models import (
+    QuoteExtractionRequest,
+    RfqRunDetail,
+    RfqRunSubmission,
+    RfqSourceRunSubmission,
+)
 from app.approval.models import ApprovalRequest, ApprovalResult, BuyerApproval
 from app.approval.service import ApprovalError, ApprovalService, BuyerApprovalPolicy
 from app.auth.models import AuthenticatedPrincipal, AuthMode, Permission
@@ -28,9 +33,11 @@ from app.auth.service import (
 )
 from app.domain.models import NormalizedQuote
 from app.ingestion.extractors import (
+    DocumentExtractionError,
     ExtractionProvider,
     FixtureQuoteExtractor,
     GeminiQuoteExtractor,
+    extract_supplier_documents,
 )
 from app.negotiation.models import CounterOfferDraft, NegotiationRequest
 from app.negotiation.service import NegotiationGuardrailError, NegotiationService
@@ -61,9 +68,14 @@ class InvalidIdempotencyKeyError(ValueError):
 
 
 def _idempotency_context(
-    submission: RfqRunSubmission, request: Request
+    submission: RfqRunSubmission | RfqSourceRunSubmission, request: Request
 ) -> tuple[str | None, str | None]:
-    """Validate an opaque retry key and hash normalized input without logging either."""
+    """Validate an opaque retry key and hash normalized input without logging it.
+
+    Source-document requests hash their raw artifact bytes only in memory. The
+    persisted fingerprint is one-way; the document contents are never written to
+    an RFQ payload or to local structured logs.
+    """
 
     header_value = request.headers.get("Idempotency-Key")
     if header_value is None:
@@ -248,7 +260,7 @@ def _raise_http_error(error: Exception) -> Never:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     if isinstance(error, InvalidIdempotencyKeyError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-    if isinstance(error, (json.JSONDecodeError, ValidationError)):
+    if isinstance(error, (json.JSONDecodeError, ValidationError, DocumentExtractionError)):
         # Do not echo invalid supplier content or Pydantic's input fragments.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -313,6 +325,53 @@ def create_rfq_run(
         approval_ready_quote_count=sum(
             score.approval_ready for score in result.comparison.ranked_quotes
         ),
+        execution_boundary="draft_only",
+    )
+    return result
+
+
+@router.post("/source-runs", response_model=RfqWorkflowResult, status_code=status.HTTP_201_CREATED)
+def create_rfq_source_run(
+    submission: RfqSourceRunSubmission,
+    request: Request,
+    response: Response,
+) -> RfqWorkflowResult:
+    """Normalize three-to-five source documents, then start the durable RFQ flow.
+
+    This endpoint accepts CSV quotations, unstructured supplier email text, and
+    base64 PDF invoices/quotations. Source artifacts are processed in memory and
+    discarded after strict normalization; only the validated quote facts enter
+    the tenant-scoped durable workflow.
+    """
+
+    workflow, _, _ = _services(request)
+    try:
+        principal = _principal(request, Permission.WRITE)
+        quotes = extract_supplier_documents(
+            submission.supplier_documents,
+            provider=submission.provider,
+        )
+        idempotency_key, request_fingerprint = _idempotency_context(submission, request)
+        result = workflow.run(
+            submission.requisition,
+            quotes,
+            observed_on=submission.observed_on,
+            run_id=submission.run_id,
+            tenant_id=principal.tenant_id,
+            idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+    if result.idempotent_replay:
+        response.status_code = status.HTTP_200_OK
+    record_event(
+        "rfq_source_run_completed",
+        run_id=result.run.run_id,
+        state=result.run.state,
+        quote_count=len(quotes),
+        source_count=len(submission.supplier_documents),
+        provider=submission.provider,
         execution_boundary="draft_only",
     )
     return result
@@ -467,12 +526,12 @@ def extract_quote(extraction: QuoteExtractionRequest, request: Request) -> Norma
 
     try:
         _principal(request, Permission.WRITE)
-        extractor = (
-            FixtureQuoteExtractor()
-            if extraction.provider is ExtractionProvider.FIXTURE
-            else GeminiQuoteExtractor()
-        )
-        quote = extractor.extract(extraction.raw_quote)
+        if extraction.provider is ExtractionProvider.FIXTURE:
+            quote = FixtureQuoteExtractor().extract(extraction.raw_quote)
+        elif extraction.provider is ExtractionProvider.GEMINI:
+            quote = GeminiQuoteExtractor().extract(extraction.raw_quote)
+        else:
+            raise ValueError("rule-based document extraction requires the source-runs endpoint")
     except Exception as error:
         _raise_http_error(error)
     record_event("quote_extracted", provider=extraction.provider, outcome="validated")
