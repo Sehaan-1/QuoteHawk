@@ -64,7 +64,7 @@ Use `Decimal` for money; do not introduce binary floating-point pricing.
 ## agents-cli lifecycle
 
 This project was scaffolded with `google-agents-cli` 1.14.0 using the ADK Python
-prototype template. Use its lifecycle deliberately:
+starter template. Use its lifecycle deliberately:
 
 1. Update and obtain approval for `.agents-cli-spec.md` when requirements or
    safety constraints change.

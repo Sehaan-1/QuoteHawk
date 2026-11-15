@@ -1,7 +1,7 @@
 [project]
 name = "quotehawk"
 version = "0.1.0"
-description = "Stateful, guarded RFQ-to-PO procurement agent prototype"
+description = "Stateful, guarded RFQ-to-PO procurement agent"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "Apache-2.0" }

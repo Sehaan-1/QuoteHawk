@@ -1,11 +1,11 @@
 # QuoteHawk
 
-**QuoteHawk** is a stateful, guarded RFQ-to-PO procurement-agent prototype. It
+**QuoteHawk** is a stateful, guarded RFQ-to-PO procurement assistant. It
 turns supplier quotes into a reproducible landed-cost comparison, remembers
 supplier commercial history locally, and keeps high-stakes actions behind a human
 approval gate.
 
-> **Prototype boundary:** QuoteHawk is draft-only. It never sends vendor email,
+> **Operating boundary:** QuoteHawk is draft-only. It never sends vendor email,
 > writes to an ERP, places an order, or produces a binding purchase order. A
 > buyer must approve before a later workflow can unlock a PO *draft*.
 
@@ -29,7 +29,7 @@ QuoteHawk is designed around the control points a production agent needs:
 
 ## Current milestones 
 
-The prototype now includes a production-oriented Postgres persistence path,
+The system includes a production-oriented Postgres persistence path,
 retry-safe durable workflow controls, adversarial policy hardening, and audited
 client dependency upgrades while retaining credential-free SQLite demos and the
 earlier API identity boundaries:
@@ -110,7 +110,7 @@ scaffolded with [Google agents-cli](https://github.com/google/agents-cli) 1.14.0
 # one-time tools
 uv tool install google-agents-cli
 
-# default prototype, test, and static-analysis dependencies (Redis remains optional)
+# default local test and static-analysis dependencies (Redis remains optional)
 uv sync --all-groups --extra lint
 
 # credential-free deterministic tests, including FastAPI + SQLite HTTP integration coverage
@@ -154,7 +154,7 @@ before any production proposal.
 
 ## Optional Redis cache and work queue
 
-Redis is **not required** for the default SQLite prototype, FastAPI/SQLite
+Redis is **not required** for the default SQLite local store, FastAPI/SQLite
 integration tests, or a single-process local demo. It becomes required only when
 you deliberately set `QUOTEHAWK_REDIS_URL` to share supplier-baseline caching and
 RFQ work signals across processes. The selected SQLite or Postgres repository
@@ -272,7 +272,7 @@ no cloud authentication, and no deployment steps. Configure its four job names a
 required status checks in GitHub branch protection to make successful CI mandatory
 before merges.
 
-The project remains **prototype-first**: it has CI but no Terraform, CD deployment,
+The project adopts a **guarded-first** posture: it has CI but no Terraform, CD deployment,
 or cloud resource assumptions. Do not deploy it until an identity-provider,
 Postgres operations, proxy controls, threat model, and production readiness review
 are explicitly approved.
@@ -298,7 +298,7 @@ are explicitly approved.
 3. **Guarded Gemini negotiation + HITL API** — complete.
 4. **Buyer experience** — complete.
 5. **Evaluation, observability, deployability** — complete for the local
-   prototype: `agents-cli` safety datasets, adversarial/API regressions, safe local
+   runtime: `agents-cli` safety datasets, adversarial/API regressions, safe local
    correlation logs, container hardening, and future integration contracts.
 6. **Production identity and tenant authorization** — complete: OIDC JWT
    verification, role-gated API capabilities, server-derived approval actors, and
@@ -314,7 +314,7 @@ are explicitly approved.
 9. **Adversarial policy hardening** — complete: unique RFQ bid identities,
    nested-schema injection coverage, presentation-normalized competitor disclosure
    blocking, broader false-execution claims, and credentialed safety-eval fixtures.
-10. **Prototype quality and runtime validation** — complete: offline deterministic
+10. **System quality and runtime validation** — complete: offline deterministic
     regression, static client export, proxy contract, packaging, and safe-runtime
     validation are documented without claiming unavailable cloud/container checks.
 11. **Client dependency security** — complete: the Next.js buyer workspace and

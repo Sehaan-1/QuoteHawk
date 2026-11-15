@@ -1,6 +1,6 @@
 # QuoteHawk runtime and future integration contracts
 
-> **Status:** prototype hardening only. This document describes the contracts a
+> **Status:** integration architecture only. This document describes the contracts a
 > future production owner must implement; it does not deploy QuoteHawk, create a
 > cloud resource, configure OAuth, send vendor communications, write to an ERP,
 > or authorize a binding purchase order.
@@ -211,7 +211,7 @@ outside source, client bundles, and logs.
 
 ## Redis supplier memory and queue contract
 
-Redis is optional for the default SQLite prototype and becomes required only when
+Redis is optional for the default SQLite setup and becomes required only when
 `QUOTEHAWK_REDIS_URL` explicitly enables it as the tenant-scoped supplier-baseline
 cache and RFQ work-signal queue. Install its optional package before setting that
 URL with `uv sync --extra redis`; QuoteHawk raises a clear configuration error if
