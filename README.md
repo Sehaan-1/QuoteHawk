@@ -23,9 +23,10 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestone — PR 7
+## Current milestones — PRs 7–9
 
-The prototype now adds a production-oriented Postgres persistence path while
+The prototype now includes a production-oriented Postgres persistence path,
+retry-safe durable workflow controls, and adversarial policy hardening while
 retaining credential-free SQLite demos and the earlier API identity boundaries:
 
 - a Next.js five-bid dashboard with landed-cost breakdowns, budget eligibility,
@@ -41,7 +42,11 @@ retaining credential-free SQLite demos and the earlier API identity boundaries:
   approval actor fields;
 - an explicit Postgres repository with reviewed migration SQL, forced row-level
   tenant security, transaction-local tenant binding, and atomic workflow/approval
-  writes, without a silent SQLite fallback; and
+  writes, without a silent SQLite fallback;
+- tenant-scoped RFQ idempotency keys, immutable request fingerprints, deterministic
+  resume/recovery, readiness checks, and SQLite/Postgres concurrency regressions;
+- unique RFQ bid identities plus adversarial checks for nested schema injection,
+  straightforward competitor-disclosure obfuscation, and false execution claims; and
 - a non-root local runtime container, liveness endpoint, reverse-proxy contract,
   and explicit production identity/Postgres/vendor-mail/ERP integration contracts.
 
