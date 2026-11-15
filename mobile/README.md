@@ -6,10 +6,12 @@ the RFQ outcome. It has no send, purchase, supplier-contact, or ERP capability.
 
 ## Run locally
 
+Requires Node.js 22.13 or later for Expo SDK 58 and React Native 0.88.
+
 ```bash
 cd mobile
 cp .env.example .env
-npm install
+npm ci
 npm run start
 ```
 
@@ -31,4 +33,11 @@ rely on this allowlist. See
 
 ```bash
 npm run typecheck
+npm run export:web
+npm run export:android
+npm audit --omit=dev --audit-level=low
 ```
+
+The export scripts intentionally run Expo in offline mode. They validate the
+committed dependency graph without querying Expo's version service; remove the
+resulting `dist/` directory after an ad-hoc local export.

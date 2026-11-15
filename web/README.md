@@ -6,7 +6,8 @@ buyer tool, not an execution client: every approval result is a persisted
 
 ## Run locally
 
-From the repository root, start the API first:
+Requires Node.js 20.9 or later for Next.js 16. From the repository root, start
+the API first:
 
 ```bash
 QUOTEHAWK_OTEL_TO_CLOUD=false uv run uvicorn app.fast_api_app:app --host 0.0.0.0 --port 8000 --no-access-log
@@ -17,7 +18,7 @@ Then start the workspace in another terminal:
 ```bash
 cd web
 cp .env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
@@ -55,6 +56,7 @@ through a reviewed flow and attach it in a same-origin/proxy-safe way.
 npm run typecheck
 npm run build
 npm run build:static
+npm audit --omit=dev --audit-level=low
 ```
 
 The visual system follows the software-page plan produced with Taste Skill. Its
