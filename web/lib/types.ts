@@ -86,7 +86,11 @@ export type RfqRunDetail = {
   };
   audit_events: AuditEvent[];
   payload: {
-    requisition: { currency: string; max_landed_cost: string };
+    requisition: {
+      currency: string;
+      max_landed_cost: string;
+      target_payment_days?: number;
+    };
     quotes: Quote[];
     comparison: { currency: string; ranked_quotes: QuoteScore[] };
     anomalies: QuoteAnomaly[];

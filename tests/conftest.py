@@ -8,6 +8,7 @@ import pytest
 
 from app.domain.models import (
     NormalizedQuote,
+    PaymentMilestone,
     PaymentTerms,
     PurchaseRequisition,
     QuoteLine,
@@ -30,6 +31,7 @@ def requisition() -> PurchaseRequisition:
         ),
         max_landed_cost=Decimal("1400.00"),
         target_lead_time_days=7,
+        target_payment_days=30,
     )
 
 
@@ -44,6 +46,8 @@ def make_quote(
     duties_cost: str = "50.00",
     lead_time_days: int = 7,
     payment_terms: PaymentTerms = PaymentTerms.NET_30,
+    payment_term_days: int | None = None,
+    payment_milestones: tuple[PaymentMilestone, ...] = (),
     minimum_order_quantity: str = "0",
     quality_penalty: str = "0",
     early_payment_discount_rate: str = "0",
@@ -68,6 +72,8 @@ def make_quote(
         duties_cost=Decimal(duties_cost),
         lead_time_days=lead_time_days,
         payment_terms=payment_terms,
+        payment_term_days=payment_term_days,
+        payment_milestones=payment_milestones,
         minimum_order_quantity=Decimal(minimum_order_quantity),
         quality_penalty=Decimal(quality_penalty),
         early_payment_discount_rate=Decimal(early_payment_discount_rate),

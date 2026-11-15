@@ -75,6 +75,7 @@ export type RfqRunDetail = {
     requisition: {
       currency: string;
       max_landed_cost: string;
+      target_payment_days?: number;
       items?: Array<{ sku: string; quantity: string }>;
     };
     quotes: Quote[];

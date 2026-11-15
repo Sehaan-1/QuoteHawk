@@ -14,6 +14,12 @@ export function ReviewSummary({ detail, busy, onRefresh }: ReviewSummaryProps) {
   const comparison = detail.payload.comparison;
   const eligibleCount = comparison.ranked_quotes.filter((score) => score.approval_ready).length;
   const itemCount = detail.payload.requisition.items?.length ?? 0;
+  const paymentTarget = detail.payload.requisition.target_payment_days;
+  const paymentPreference = paymentTarget === undefined
+    ? "Not recorded"
+    : paymentTarget === 0
+      ? "Prepayment"
+      : `Net ${paymentTarget}`;
 
   return (
     <>
@@ -31,6 +37,10 @@ export function ReviewSummary({ detail, busy, onRefresh }: ReviewSummaryProps) {
           <Text style={styles.metaValue}>
             {formatMoney(detail.payload.requisition.max_landed_cost, comparison.currency)}
           </Text>
+        </View>
+        <View style={styles.metaCell}>
+          <Text style={styles.metaLabel}>PAYMENT PREFERENCE</Text>
+          <Text style={styles.metaValue}>{paymentPreference}</Text>
         </View>
         <View style={styles.metaCell}>
           <Text style={styles.metaLabel}>ELIGIBLE BIDS</Text>

@@ -120,7 +120,7 @@ textarea { resize: vertical; }
 .workspace-section { background: #0c0a08; }
 .section-heading { margin-bottom: 42px; }
 .section-heading > p:last-child { max-width: 650px; color: #b8b0a6; font-size: 18px; }
-.run-strip { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #352f28; border-radius: 12px 12px 0 0; overflow: hidden; background: #15120f; }
+.run-strip { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid #352f28; border-radius: 12px 12px 0 0; overflow: hidden; background: #15120f; }
 .run-strip > div { min-height: 82px; display: grid; align-content: center; gap: 6px; border-right: 1px solid #352f28; padding: 16px 18px; }
 .run-strip > div:last-child { border-right: 0; }
 .run-strip span, .cost-breakdown span { color: #8e8479; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; }
@@ -268,8 +268,8 @@ textarea { resize: vertical; }
   .hero-visual { min-height: 430px; max-width: 660px; }
   .load-grid { gap: 24px; }
   .run-strip, .cost-breakdown { grid-template-columns: repeat(2, 1fr); }
-  .run-strip > div:nth-child(2), .cost-breakdown > div:nth-child(2) { border-right: 0; }
-  .run-strip > div:nth-child(-n+2), .cost-breakdown > div:nth-child(-n+2) { border-bottom: 1px solid #443a2d; }
+  .run-strip > div:nth-child(even), .cost-breakdown > div:nth-child(2) { border-right: 0; }
+  .run-strip > div:nth-child(-n+4), .cost-breakdown > div:nth-child(-n+2) { border-bottom: 1px solid #443a2d; }
   .review-grid { gap: 16px; }
   .anomaly-panel, .audit-panel { min-height: auto; }
 }

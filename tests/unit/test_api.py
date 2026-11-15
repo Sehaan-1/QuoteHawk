@@ -311,6 +311,7 @@ def test_api_normalizes_three_supplier_source_documents_without_persisting_raw_c
     ]
     first_score = created.json()["comparison"]["ranked_quotes"][0]
     assert first_score["landed_cost"]["shipping_cost"] == "35.00"
+    assert detail.json()["payload"]["requisition"]["target_payment_days"] == 30
     assert "RAW-SUPPLIER-ARTIFACT-MUST-NOT-PERSIST" not in detail.text
     assert changed_key_conflict.status_code == 409
     assert too_few_response.status_code == 422
