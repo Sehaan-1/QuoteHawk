@@ -22,6 +22,7 @@ from app.domain.models import (
     PurchaseRequisition,
     QuoteComparison,
     assert_unique_quote_identities,
+    persisted_quote_from_payload,
 )
 from app.persistence.repository import QuoteHawkRepository
 from app.workflow.models import RfqRunState
@@ -208,7 +209,7 @@ class ApprovalService:
         """Load legacy snapshots defensively before opening or resolving approval."""
 
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
-        quotes = tuple(NormalizedQuote.model_validate(candidate) for candidate in payload["quotes"])
+        quotes = tuple(persisted_quote_from_payload(candidate) for candidate in payload["quotes"])
         try:
             assert_unique_quote_identities(quotes)
         except ValueError as error:

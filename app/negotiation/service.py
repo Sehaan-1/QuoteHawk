@@ -12,6 +12,7 @@ from app.domain.models import (
     NormalizedQuote,
     QuoteComparison,
     assert_unique_quote_identities,
+    persisted_quote_from_payload,
 )
 from app.negotiation.drafters import (
     CounterOfferContent,
@@ -131,7 +132,7 @@ class NegotiationService:
             )
 
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
-        quotes = tuple(NormalizedQuote.model_validate(item) for item in payload["quotes"])
+        quotes = tuple(persisted_quote_from_payload(item) for item in payload["quotes"])
         try:
             assert_unique_quote_identities(quotes)
         except ValueError as error:
@@ -233,6 +234,7 @@ class NegotiationService:
                 )
             commercial_values = [
                 quote.freight_cost,
+                quote.shipping_cost,
                 quote.duties_cost,
                 *(line.unit_price for line in quote.lines),
             ]
