@@ -25,7 +25,16 @@ npm run dev
 The Next development server proxies its relative `/api/rfq/*` requests to the
 configured `QUOTEHAWK_API_ORIGIN`. Browser code never calls `localhost` itself.
 Use **Create local fixture** to exercise the five-bid workflow without Gemini
-credentials or external execution.
+credentials or external execution. The workspace never hardcodes an approver: in
+local `prototype` mode, enter an ID that the API has allowlisted through
+`QUOTEHAWK_AUTHORIZED_BUYERS` when resolving a decision. In OIDC mode, the API
+ignores that optional local field and records the verified token subject instead.
+A future identity integration must still attach the verified bearer credential at
+the same-origin proxy; this UI does not implement a login flow.
+
+The RFQ comparison uses native table and radio controls, the audit record has
+keyboard-accessible pagination, and the page provides a skip link, focused error
+recovery, and reduced-motion-safe loading states.
 
 ## Static export
 

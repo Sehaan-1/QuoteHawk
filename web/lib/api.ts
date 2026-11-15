@@ -116,14 +116,14 @@ export const openApproval = (runId: string) =>
 export const decideApproval = (
   runId: string,
   decision: "approve" | "reject",
-  buyerId: string,
+  prototypeBuyerId: string | undefined,
   selectedQuoteId: string,
   note: string,
 ) =>
   request(`/runs/${encodeURIComponent(runId)}/approvals`, {
     method: "POST",
     body: JSON.stringify({
-      buyer_id: buyerId,
+      buyer_id: prototypeBuyerId,
       decision,
       selected_quote_id: decision === "approve" ? selectedQuoteId : undefined,
       note: note || undefined,
