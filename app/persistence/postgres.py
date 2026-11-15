@@ -15,11 +15,12 @@ from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool
 
 from app.analysis.models import SupplierQuoteBaseline
 from app.approval.models import ApprovalDecision, ApprovalRecord, PurchaseOrderDraft
@@ -51,6 +52,10 @@ _MIGRATIONS = (
     ),
 )
 ConnectionFactory = Callable[[str], Any]
+ConnectionPoolFactory = Callable[..., Any]
+_DEFAULT_POOL_MIN_SIZE = 1
+_DEFAULT_POOL_MAX_SIZE = 10
+_DEFAULT_POOL_TIMEOUT_SECONDS = 5.0
 
 
 def _utc_now() -> datetime:
@@ -83,8 +88,23 @@ def _migration_statements(path: Path | None = None) -> tuple[str, ...]:
     return tuple(statement.strip() for statement in migration.split(";") if statement.strip())
 
 
-def _default_connection(dsn: str) -> psycopg.Connection[dict[str, Any]]:
-    return psycopg.Connection[dict[str, Any]].connect(dsn, row_factory=dict_row)
+def _default_connection_pool(
+    dsn: str,
+    *,
+    min_size: int,
+    max_size: int,
+    timeout: float,
+) -> ConnectionPool[Any]:
+    """Create a lazy psycopg pool without opening a connection in the constructor."""
+
+    return ConnectionPool(
+        conninfo=dsn,
+        kwargs={"row_factory": dict_row},
+        min_size=min_size,
+        max_size=max_size,
+        timeout=timeout,
+        open=False,
+    )
 
 
 class PostgresSupplierMemory:
@@ -101,34 +121,92 @@ class PostgresSupplierMemory:
         dsn: str,
         *,
         connection_factory: ConnectionFactory | None = None,
+        connection_pool: Any | None = None,
+        pool_factory: ConnectionPoolFactory = _default_connection_pool,
+        pool_min_size: int = _DEFAULT_POOL_MIN_SIZE,
+        pool_max_size: int = _DEFAULT_POOL_MAX_SIZE,
+        pool_timeout_seconds: float = _DEFAULT_POOL_TIMEOUT_SECONDS,
     ) -> None:
         if not dsn.strip():
             raise ValueError("a non-empty Postgres DSN is required")
+        if connection_factory is not None and connection_pool is not None:
+            raise ValueError(
+                "provide either a Postgres connection factory or connection pool, not both"
+            )
+        if pool_min_size < 0:
+            raise ValueError("Postgres pool minimum size cannot be negative")
+        if pool_max_size < 1 or pool_min_size > pool_max_size:
+            raise ValueError("Postgres pool sizes must satisfy 0 <= minimum <= maximum")
+        if pool_timeout_seconds <= 0:
+            raise ValueError("Postgres pool timeout must be positive")
+
         self.dsn = dsn
-        self._connection_factory = connection_factory or _default_connection
+        self.pool_min_size = pool_min_size
+        self.pool_max_size = pool_max_size
+        self.pool_timeout_seconds = pool_timeout_seconds
+        # ``connection_factory`` exists only as an offline contract-test seam.
+        # Runtime repositories always use psycopg_pool and borrow/return a
+        # connection for each transaction rather than opening a socket per call.
+        self._connection_factory = connection_factory
+        if connection_factory is not None:
+            self._connection_pool = None
+        elif connection_pool is not None:
+            self._connection_pool = connection_pool
+        else:
+            self._connection_pool = pool_factory(
+                dsn,
+                min_size=pool_min_size,
+                max_size=pool_max_size,
+                timeout=pool_timeout_seconds,
+            )
+        self._pool_opened = False
+        self._pool_lock = Lock()
+
+    @contextmanager
+    def _connection(self) -> Generator[Any, None, None]:
+        """Borrow one connection and return it only after transaction cleanup."""
+
+        if self._connection_factory is not None:
+            connection = self._connection_factory(self.dsn)
+            try:
+                yield connection
+            finally:
+                connection.close()
+            return
+
+        if self._connection_pool is None:  # Defensive narrowing for injected test seams.
+            raise RuntimeError("Postgres connection pool is not configured")
+        with self._pool_lock:
+            if not self._pool_opened:
+                self._connection_pool.open(wait=False)
+                self._pool_opened = True
+        with self._connection_pool.connection() as connection:
+            yield connection
 
     @contextmanager
     def _tenant_connection(self, tenant_id: str) -> Generator[Any, None, None]:
         if not tenant_id.strip():
             raise ValueError("tenant ID must not be empty")
-        connection = self._connection_factory(self.dsn)
-        try:
+        with self._connection() as connection:
             with connection.transaction():
                 connection.execute(
                     "SELECT set_config('quotehawk.tenant_id', %s, true)", (tenant_id,)
                 )
                 yield connection
-        finally:
-            connection.close()
 
     @contextmanager
     def _schema_connection(self) -> Generator[Any, None, None]:
-        connection = self._connection_factory(self.dsn)
-        try:
+        with self._connection() as connection:
             with connection.transaction():
                 yield connection
-        finally:
-            connection.close()
+
+    def close(self) -> None:
+        """Release pool workers and idle database connections during app shutdown."""
+
+        if self._connection_pool is not None:
+            with self._pool_lock:
+                self._connection_pool.close()
+                self._pool_opened = False
 
     def initialize(self) -> None:
         """Apply the one-time, transactionally recorded Postgres schema migration."""

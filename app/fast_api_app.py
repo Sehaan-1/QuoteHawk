@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.runners import Runner
 
-from app.api.routes import configure_quotehawk_api
+from app.api.routes import close_quotehawk_api_persistence, configure_quotehawk_api
 from app.api.routes import router as quotehawk_router
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
@@ -49,14 +49,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.runner = runner
     app.state.agent_app_name = adk_app.name
-    await attach_a2a_routes(
-        app,
-        agent=root_agent,
-        runner=runner,
-        task_store=InMemoryTaskStore(),
-        rpc_path=f"/a2a/{adk_app.name}",
-    )
-    yield
+    try:
+        await attach_a2a_routes(
+            app,
+            agent=root_agent,
+            runner=runner,
+            task_store=InMemoryTaskStore(),
+            rpc_path=f"/a2a/{adk_app.name}",
+        )
+        yield
+    finally:
+        close_quotehawk_api_persistence(app)
 
 
 app: FastAPI = get_fast_api_app(

@@ -140,8 +140,11 @@ export QUOTEHAWK_PERSISTENCE_BACKEND=postgres
 ```
 
 The schema uses `NUMERIC`, JSONB snapshots, atomic versioned RFQ transitions, and
-forced tenant row-level security. Keep the DSN in a secret manager and follow the
-[Postgres migration contract](docs/production-integration-contracts.md#postgres-repository-and-migration-contract)
+forced tenant row-level security. Each API process uses a lazy bounded `psycopg_pool`
+connection pool (defaults: min `1`, max `10`, timeout `5` seconds) configured with
+`QUOTEHAWK_POSTGRES_POOL_MIN_SIZE`, `QUOTEHAWK_POSTGRES_POOL_MAX_SIZE`, and
+`QUOTEHAWK_POSTGRES_POOL_TIMEOUT_SECONDS`. Keep the DSN in a secret manager and
+follow the [Postgres migration contract](docs/production-integration-contracts.md#postgres-repository-and-migration-contract)
 before any production proposal.
 
 ## Local container, logs, and runtime boundary
