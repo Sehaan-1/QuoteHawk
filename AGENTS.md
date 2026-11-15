@@ -72,6 +72,10 @@ prototype template. Use its lifecycle deliberately:
 3. Implement deterministic unit coverage first, then model/evaluation coverage.
 4. Use `agents-cli eval run` after an LLM negotiation/extraction surface exists.
 5. Do not deploy or add cloud resources without explicit human approval.
+6. `.github/workflows/ci.yml` is an offline, credential-free GitHub Actions quality
+   gate—not a deployment workflow. Keep it aligned with the reproducible targets
+   in `Makefile`; do not add cloud authentication, deployment, or vendor/ERP
+   execution to CI.
 
 Useful commands:
 

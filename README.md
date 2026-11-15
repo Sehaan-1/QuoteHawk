@@ -25,7 +25,7 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestones — PRs 7–12
+## Current milestones — PRs 7–13
 
 The prototype now includes a production-oriented Postgres persistence path,
 retry-safe durable workflow controls, adversarial policy hardening, and audited
@@ -220,8 +220,25 @@ agents-cli eval run
 agents-cli scaffold enhance . --deployment-target cloud_run
 ```
 
-The project uses a **prototype-first** posture. It contains no Terraform, CI/CD,
-or cloud resource assumptions yet. Do not deploy it until an identity-provider,
+## Continuous integration
+
+GitHub Actions runs on every branch push and every pull request targeting `main`. It invokes the
+reproducible targets in the root `Makefile` and has four independent checks:
+
+- `agents-cli info`, `lint`, and `build` against the committed ADK scaffold;
+- locked Python dependency installation, formatting, linting, tests, type and
+  spelling checks, lock verification, and wheel archive validation;
+- clean Next.js install, typecheck, production/static builds, and production audit;
+- clean Expo install, typecheck, offline web/Android exports, and production audit.
+
+Run the same gates locally with `make ci` (or `make ci-python`, `make ci-web`, or
+`make ci-mobile`). The workflow has read-only repository permissions, no secrets,
+no cloud authentication, and no deployment steps. Configure its four job names as
+required status checks in GitHub branch protection to make successful CI mandatory
+before merges.
+
+The project remains **prototype-first**: it has CI but no Terraform, CD deployment,
+or cloud resource assumptions. Do not deploy it until an identity-provider,
 Postgres operations, proxy controls, threat model, and production readiness review
 are explicitly approved.
 
@@ -231,7 +248,7 @@ are explicitly approved.
 | --- | --- |
 | Budget | A quote over `max_landed_cost` remains visible but is never approval-ready. |
 | Currency | This prototype rejects currency mismatches; it does not guess FX rates. |
-| Fees | Freight and duties must be present explicitly, even when zero. |
+| Fees | Freight, shipping, and duties must be present explicitly, even when zero. |
 | Precision | All money uses `Decimal`; SQLite stores canonical decimal text and Postgres stores `NUMERIC`. |
 | Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor identity or exact commercial term is blocked after presentation-normalized checks. |
 | Approval | In OIDC mode, only a verified token subject with the configured approver role and matching tenant can decide an awaiting request; only an eligible quote can yield a draft. The allowlist is local-prototype fallback only. |
@@ -272,6 +289,9 @@ are explicitly approved.
     three-to-five-document CSV/email/PDF RFQ input normalizes without retaining
     raw artifacts; freight, shipping, duties, lead time, MOQ, and payment terms
     are explicit deterministic cost components.
+13. **Continuous integration guardrails** — complete: credential-free GitHub
+    Actions checks enforce the same Python, agents-cli, web, and mobile quality
+    gates exercised locally through the root `Makefile`; deployment remains absent.
 
 ## Project layout
 
@@ -290,6 +310,8 @@ app/
   workflow/                # finite-state RFQ orchestration
 web/                       # Next.js buyer dashboard; typed relative API client, proxy, static export
 mobile/                    # Expo buyer approval companion
+.github/workflows/ci.yml   # credential-free push/PR quality gate
+Makefile                   # local equivalents of the CI quality targets
 tests/unit/                # credential-free policy, API, approval, and workflow tests
 .agents-cli-spec.md        # approved product/safety specification
 agents-cli-manifest.yaml   # agents-cli scaffold metadata
