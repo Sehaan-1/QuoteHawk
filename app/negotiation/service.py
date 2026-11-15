@@ -10,6 +10,7 @@ from decimal import Decimal
 from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import (
     NormalizedQuote,
+    PaymentTerms,
     QuoteComparison,
     assert_unique_quote_identities,
     persisted_quote_from_payload,
@@ -21,7 +22,13 @@ from app.negotiation.drafters import (
     FixtureCounterOfferDrafter,
     GeminiCounterOfferDrafter,
 )
-from app.negotiation.models import CounterOfferDraft, DraftProvider, NegotiationRequest
+from app.negotiation.models import (
+    CounterOfferDraft,
+    DraftProvider,
+    NegotiationRequest,
+    NegotiationSpeaker,
+    NegotiationThreadMessage,
+)
 from app.persistence.repository import QuoteHawkRepository
 from app.workflow.models import RfqRunState
 
@@ -90,6 +97,10 @@ def _is_payment_or_lead_term_in_message(
     payment_term = _compact_disclosure_text(quote.payment_terms.value)
     if payment_term in compact_message:
         return True
+    if quote.payment_terms is PaymentTerms.LETTER_OF_CREDIT and "letterofcredit" in compact_message:
+        return True
+    if quote.payment_terms is PaymentTerms.MILESTONE and "milestone" in compact_message:
+        return True
     return bool(
         re.search(
             rf"(?<!\d){quote.lead_time_days}\s*(?:business\s*)?(?:days?|d)\b",
@@ -111,10 +122,14 @@ class NegotiationService:
         *,
         fixture_drafter: CounterOfferDrafter | None = None,
         gemini_drafter: CounterOfferDrafter | None = None,
+        max_target_reduction_rate: Decimal = Decimal("0.15"),
     ) -> None:
+        if not Decimal("0") < max_target_reduction_rate <= Decimal("1"):
+            raise ValueError("max_target_reduction_rate must be between zero and one")
         self.memory = memory
         self.fixture_drafter = fixture_drafter or FixtureCounterOfferDrafter()
         self.gemini_drafter = gemini_drafter
+        self.max_target_reduction_rate = max_target_reduction_rate
 
     def draft(
         self,
@@ -160,6 +175,11 @@ class NegotiationService:
             raise NegotiationGuardrailError(
                 "counter-offer target must be lower than current landed cost"
             )
+        reduction_rate = (current_landed_cost - request.target_landed_cost) / current_landed_cost
+        if reduction_rate > self.max_target_reduction_rate:
+            raise NegotiationGuardrailError(
+                "counter-offer target exceeds the configured negotiation threshold"
+            )
 
         context = DraftContext(
             vendor_name=current_quote.vendor_name,
@@ -176,6 +196,11 @@ class NegotiationService:
             comparison=comparison,
         )
         self._assert_draft_only_language(content)
+        thread = self._simulate_thread(
+            content,
+            rounds=request.simulated_rounds,
+            requisition_id=run.requisition_id,
+        )
 
         draft = CounterOfferDraft(
             run_id=run_id,
@@ -186,19 +211,52 @@ class NegotiationService:
             currency=current_quote.currency,
             provider=request.provider,
             created_at=datetime.now(UTC),
+            thread=thread,
         )
-        self.memory.record_rfq_event(
-            run_id=run_id,
-            event_type="counter_offer_drafted",
-            reason="A confidentiality-checked counter-offer draft was prepared for buyer review.",
-            tenant_id=tenant_id,
-            details={
-                "vendor_id": current_quote.vendor_id,
-                "provider": request.provider.value,
-                "execution_boundary": "draft_only",
-            },
-        )
+        self.memory.store_counter_offer_draft(draft=draft, tenant_id=tenant_id)
         return draft
+
+    @staticmethod
+    def _simulate_thread(
+        content: CounterOfferContent,
+        *,
+        rounds: int,
+        requisition_id: str,
+    ) -> tuple[NegotiationThreadMessage, ...]:
+        """Create a clearly simulated review thread without a messaging capability."""
+
+        messages: list[NegotiationThreadMessage] = []
+        for round_number in range(1, rounds + 1):
+            buyer_body = (
+                content.body
+                if round_number == 1
+                else (
+                    f"Hello,\n\nFollowing up on the draft-only discussion for {requisition_id}. "
+                    "Please confirm whether the requested commercial revision can be considered. "
+                    "This is a simulation for buyer review; no message was sent.\n\nRegards,\nProcurement Team"
+                )
+            )
+            messages.append(
+                NegotiationThreadMessage(
+                    round_number=round_number,
+                    speaker=NegotiationSpeaker.BUYER,
+                    subject=content.subject,
+                    body=buyer_body,
+                )
+            )
+            messages.append(
+                NegotiationThreadMessage(
+                    round_number=round_number,
+                    speaker=NegotiationSpeaker.SUPPLIER,
+                    subject=f"Re: {content.subject}",
+                    body=(
+                        "Simulated supplier reply for buyer review only. The supplier may review "
+                        "the requested commercial revision and provide a revised quotation. "
+                        "No supplier email was delivered."
+                    ),
+                )
+            )
+        return tuple(messages)
 
     def _drafter_for(self, provider: DraftProvider) -> CounterOfferDrafter:
         if provider is DraftProvider.FIXTURE:

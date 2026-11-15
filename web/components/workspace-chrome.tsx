@@ -28,7 +28,7 @@ export function WorkspaceHero() {
           <p className="eyebrow">Buyer workspace · draft-only</p>
           <h1 id="hero-title">RFQ approval workspace for tail spend</h1>
           <p className="hero-lede">
-            Compare up to five supplier bids, see landed-cost guardrails, and route only an
+            Compare an international supplier field, review FX-normalized landed costs, and route only an
             eligible choice to a buyer review.
           </p>
           <div className="hero-actions">

@@ -33,7 +33,7 @@ export function RunLoader({
       <div className="wrap load-grid">
         <div>
           <h2 id="load-title">Load a persisted RFQ</h2>
-          <p>Enter a run ID from the API, or build a five-bid fixture in this local prototype.</p>
+          <p>Enter a run ID from the API, or build a five-bid review fixture in this local prototype.</p>
         </div>
         <form className="load-form" onSubmit={handleSubmit} aria-busy={isWorking}>
           <label htmlFor="run-id">RFQ run ID</label>

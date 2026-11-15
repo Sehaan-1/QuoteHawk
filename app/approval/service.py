@@ -16,6 +16,7 @@ from app.approval.models import (
     PurchaseOrderDraft,
     PurchaseOrderLine,
 )
+from app.approval.webhook import ApprovalWebhookError, BuyerApprovalWebhook
 from app.auth.models import DEFAULT_TENANT_ID, AuthenticatedPrincipal, AuthMode
 from app.domain.models import (
     NormalizedQuote,
@@ -61,9 +62,11 @@ class ApprovalService:
         memory: QuoteHawkRepository,
         *,
         policy: BuyerApprovalPolicy | None = None,
+        webhook: BuyerApprovalWebhook | None = None,
     ) -> None:
         self.memory = memory
         self.policy = policy or BuyerApprovalPolicy.from_environment()
+        self.webhook = webhook if webhook is not None else BuyerApprovalWebhook.from_environment()
 
     def open_request(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> ApprovalRequest:
         """Pause an approval-ready RFQ and return the safe buyer-card payload."""
@@ -132,10 +135,32 @@ class ApprovalService:
                 now,
                 tenant_id=verified_actor.tenant_id,
             )
-            if buyer_approval.decision is ApprovalDecision.APPROVE
+            if buyer_approval.decision in {ApprovalDecision.APPROVE, ApprovalDecision.OVERRIDE}
             else None
         )
         self.memory.complete_buyer_approval(approval=record, purchase_order_draft=draft)
+        if self.webhook is not None:
+            # Completion is durable and draft-only before notification. A transport
+            # outage cannot roll back or turn this buyer decision into an external action.
+            event = self.webhook.event_for(record=record, purchase_order_draft=draft)
+            try:
+                self.webhook.dispatch(event)
+            except ApprovalWebhookError:
+                self.memory.record_rfq_event(
+                    run_id=run_id,
+                    event_type="buyer_approval_webhook_failed",
+                    reason="Buyer approval webhook notification failed after the draft-only decision was recorded.",
+                    details={"event_id": str(event.event_id), "execution_boundary": "draft_only"},
+                    tenant_id=verified_actor.tenant_id,
+                )
+                raise
+            self.memory.record_rfq_event(
+                run_id=run_id,
+                event_type="buyer_approval_webhook_dispatched",
+                reason="Buyer approval webhook notification was dispatched for a draft-only decision.",
+                details={"event_id": str(event.event_id), "execution_boundary": "draft_only"},
+                tenant_id=verified_actor.tenant_id,
+            )
         return ApprovalResult(record=record, purchase_order_draft=draft)
 
     def _prototype_actor(self, buyer_approval: BuyerApproval) -> AuthenticatedPrincipal:

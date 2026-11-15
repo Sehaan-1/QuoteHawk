@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -18,6 +19,7 @@ class ApprovalDecision(StrEnum):
     """The only decisions a buyer can submit to a pending request."""
 
     APPROVE = "approve"
+    OVERRIDE = "override"
     REJECT = "reject"
 
 
@@ -35,11 +37,37 @@ class BuyerApproval(BaseModel):
 
     @model_validator(mode="after")
     def require_a_quote_only_for_approval(self) -> BuyerApproval:
-        if self.decision is ApprovalDecision.APPROVE and self.selected_quote_id is None:
-            raise ValueError("an approved PO draft requires a selected quote")
+        if (
+            self.decision in {ApprovalDecision.APPROVE, ApprovalDecision.OVERRIDE}
+            and self.selected_quote_id is None
+        ):
+            raise ValueError("an approved or overridden PO draft requires a selected quote")
+        if self.decision is ApprovalDecision.OVERRIDE and not self.note:
+            raise ValueError("a buyer override requires a documented reason")
         if self.decision is ApprovalDecision.REJECT and self.selected_quote_id is not None:
             raise ValueError("a rejected approval cannot select a quote")
         return self
+
+
+class ApprovalWebhookEvent(BaseModel):
+    """Audited, idempotent notification about a buyer decision.
+
+    The schema contains only buyer-review metadata and a draft-only PO reference;
+    it deliberately has no vendor-recipient, message-body, or ERP-write fields.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: UUID
+    event_type: Literal["buyer_approval", "buyer_override"]
+    run_id: str = Field(min_length=1, max_length=100)
+    tenant_id: str = Field(min_length=1, max_length=120)
+    buyer_id: str = Field(min_length=1, max_length=255)
+    decision: ApprovalDecision
+    selected_quote_id: str | None = Field(default=None, max_length=100)
+    purchase_order_draft_id: str | None = Field(default=None, max_length=100)
+    execution_boundary: Literal["draft_only"] = "draft_only"
+    occurred_at: datetime
 
 
 class ApprovalRequest(BaseModel):

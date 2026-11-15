@@ -1,8 +1,10 @@
 """Strict, provider-neutral domain types for QuoteHawk."""
 
 from .models import (
+    FxRate,
     LandedCostBreakdown,
     NormalizedQuote,
+    PaymentMilestone,
     PaymentTerms,
     PurchaseRequisition,
     QuoteComparison,
@@ -14,8 +16,10 @@ from .models import (
 )
 
 __all__ = [
+    "FxRate",
     "LandedCostBreakdown",
     "NormalizedQuote",
+    "PaymentMilestone",
     "PaymentTerms",
     "PurchaseRequisition",
     "QuoteComparison",

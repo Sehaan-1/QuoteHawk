@@ -8,7 +8,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.models import (
+    FxRate,
     NormalizedQuote,
+    PaymentMilestone,
     PaymentTerms,
     QuoteLine,
     QuoteSource,
@@ -68,11 +70,84 @@ def test_over_budget_bid_is_visible_but_not_approval_ready(requisition) -> None:
     assert "exceeds requisition budget" in score.guardrail_messages[0]
 
 
-def test_currency_mismatch_fails_instead_of_guessing_an_exchange_rate(requisition) -> None:
+def test_currency_mismatch_requires_an_explicit_fx_rate(requisition) -> None:
     quote = make_quote(currency="EUR")
 
-    with pytest.raises(PolicyViolation, match="currency conversion is not enabled"):
+    with pytest.raises(PolicyViolation, match="explicit FX rate"):
         calculate_landed_cost(requisition, quote, PricingPolicy())
+
+
+def test_explicit_fx_rate_converts_each_landed_cost_component_to_the_pr_currency(
+    requisition,
+) -> None:
+    quote = make_quote(currency="EUR")
+    rate = FxRate(source_currency="EUR", target_currency="USD", rate=Decimal("1.10"))
+
+    result = calculate_landed_cost(requisition, quote, PricingPolicy(), fx_rates=(rate,))
+
+    assert result.currency == "USD"
+    assert result.source_currency == "EUR"
+    assert result.fx_rate == Decimal("1.10")
+    assert result.line_total == Decimal("1100.00")
+    assert result.freight_cost == Decimal("110.00")
+    assert result.duties_cost == Decimal("55.00")
+    assert result.total_landed_cost == Decimal("1265.00")
+
+
+def test_milestone_and_letter_of_credit_terms_have_deterministic_effective_days(
+    requisition,
+) -> None:
+    milestone_payload = make_quote().model_dump(mode="python")
+    milestone_payload.update(
+        {
+            "payment_terms": PaymentTerms.MILESTONE,
+            "payment_milestones": (
+                PaymentMilestone(percentage=Decimal("0.40"), due_days=0),
+                PaymentMilestone(percentage=Decimal("0.60"), due_days=60),
+            ),
+        }
+    )
+    milestone_quote = NormalizedQuote.model_validate(milestone_payload)
+    letter_of_credit_payload = make_quote(quote_id="Q-LC", vendor_id="vendor-lc").model_dump(
+        mode="python"
+    )
+    letter_of_credit_payload.update(
+        {
+            "payment_terms": PaymentTerms.LETTER_OF_CREDIT,
+            "payment_term_days": 75,
+        }
+    )
+    letter_of_credit_quote = NormalizedQuote.model_validate(letter_of_credit_payload)
+
+    assert milestone_quote.effective_payment_days == 36
+    assert letter_of_credit_quote.effective_payment_days == 75
+    comparison = compare_quotes(
+        requisition,
+        [milestone_quote, letter_of_credit_quote],
+        PricingPolicy(target_payment_days=90, daily_financing_rate=Decimal("0.001")),
+    )
+    assert comparison.ranked_quotes[0].quote_id == "Q-LC"
+
+
+def test_configurable_comparison_capacity_supports_twenty_supplier_bids(requisition) -> None:
+    quotes = [
+        make_quote(
+            quote_id=f"Q-{index:02d}",
+            vendor_id=f"vendor-{index:02d}",
+            unit_price=f"{Decimal('10') + Decimal(index) / Decimal('100'):.2f}",
+        )
+        for index in range(20)
+    ]
+
+    comparison = compare_quotes(requisition, quotes, PricingPolicy())
+
+    assert len(comparison.ranked_quotes) == 20
+    with pytest.raises(PolicyViolation, match="one and 20"):
+        compare_quotes(
+            requisition,
+            [*quotes, make_quote(quote_id="Q-20", vendor_id="vendor-20")],
+            PricingPolicy(),
+        )
 
 
 def test_missing_freight_is_a_schema_failure_not_a_free_fee() -> None:

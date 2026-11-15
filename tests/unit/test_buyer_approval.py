@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from pydantic import ValidationError
 
 from app.approval.models import ApprovalDecision, BuyerApproval
 from app.approval.service import ApprovalError, ApprovalService, BuyerApprovalPolicy
@@ -48,6 +49,59 @@ def test_approval_creates_only_a_persisted_non_binding_draft(requisition, tmp_pa
     assert memory.load_rfq_run("approval-run").state is RfqRunState.APPROVED_DRAFT
     assert memory.purchase_order_draft_for("approval-run") == result.purchase_order_draft
     assert memory.audit_events_for("approval-run")[-1].event_type == "buyer_approved_draft"
+
+
+def test_documented_override_can_select_an_eligible_non_default_bid_only(
+    requisition, tmp_path
+) -> None:
+    memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
+    RfqWorkflow(memory).run(
+        requisition,
+        [
+            make_quote(quote_id="BEST", unit_price="10.00"),
+            make_quote(quote_id="ALTERNATE", vendor_id="alternate", unit_price="10.25"),
+        ],
+        observed_on=date(2026, 11, 14),
+        run_id="override-run",
+    )
+    approvals = _approval_service(memory)
+    approvals.open_request("override-run")
+
+    result = approvals.decide(
+        "override-run",
+        BuyerApproval(
+            buyer_id="buyer-1",
+            decision=ApprovalDecision.OVERRIDE,
+            selected_quote_id="ALTERNATE",
+            note="Override: incumbent qualification is required for this lot.",
+        ),
+    )
+
+    assert result.purchase_order_draft is not None
+    assert result.purchase_order_draft.source_quote_id == "ALTERNATE"
+    assert result.purchase_order_draft.status == "draft_only"
+    assert memory.audit_events_for("override-run")[-1].event_type == "buyer_overrode_draft"
+
+
+def test_override_requires_a_reason_and_cannot_bypass_the_budget_guardrail(
+    requisition, tmp_path
+) -> None:
+    with pytest.raises(ValidationError, match="documented reason"):
+        BuyerApproval(
+            buyer_id="buyer-1",
+            decision=ApprovalDecision.OVERRIDE,
+            selected_quote_id="ANY",
+        )
+
+    memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
+    RfqWorkflow(memory).run(
+        requisition,
+        [make_quote(quote_id="OVER-BUDGET", freight_cost="500")],
+        observed_on=date(2026, 11, 14),
+        run_id="override-budget-run",
+    )
+    with pytest.raises(ApprovalError, match="no within-budget"):
+        _approval_service(memory).open_request("override-budget-run")
 
 
 def test_unapproved_or_unauthorized_path_cannot_unlock_a_draft(requisition, tmp_path) -> None:

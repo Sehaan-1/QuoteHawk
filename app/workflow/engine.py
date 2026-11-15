@@ -11,6 +11,7 @@ from app.analysis.anomaly_detector import AnomalyPolicy, detect_quote_anomalies
 from app.analysis.models import QuoteAnomaly, SupplierQuoteBaseline
 from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import (
+    FxRate,
     NormalizedQuote,
     PurchaseRequisition,
     QuoteComparison,
@@ -46,7 +47,7 @@ class RfqWorkflow:
         anomaly_policy: AnomalyPolicy | None = None,
     ) -> None:
         self.memory = memory
-        self.pricing_policy = pricing_policy or PricingPolicy()
+        self.pricing_policy = pricing_policy or PricingPolicy.from_environment()
         self.anomaly_policy = anomaly_policy or AnomalyPolicy()
 
     def run(
@@ -54,6 +55,7 @@ class RfqWorkflow:
         requisition: PurchaseRequisition,
         quotes: Iterable[NormalizedQuote],
         *,
+        fx_rates: Iterable[FxRate] = (),
         observed_on: date | None = None,
         run_id: str | None = None,
         tenant_id: str = DEFAULT_TENANT_ID,
@@ -65,7 +67,12 @@ class RfqWorkflow:
         if (idempotency_key is None) != (request_fingerprint is None):
             raise ValueError("idempotency key and request fingerprint must be supplied together")
         received_quotes = tuple(quotes)
+        supplied_fx_rates = tuple(fx_rates)
         assert_unique_quote_identities(received_quotes)
+        if len({(rate.source_currency, rate.target_currency) for rate in supplied_fx_rates}) != len(
+            supplied_fx_rates
+        ):
+            raise ValueError("FX rates must not repeat a currency conversion pair")
         run_id = run_id or f"rfq-{uuid4()}"
         observed_on = observed_on or date.today()
         creation = self.memory.create_or_retrieve_rfq_run(
@@ -75,6 +82,7 @@ class RfqWorkflow:
             payload={
                 "requisition": requisition.model_dump(mode="json"),
                 "quotes": [quote.model_dump(mode="json") for quote in received_quotes],
+                "fx_rates": [rate.model_dump(mode="json") for rate in supplied_fx_rates],
                 "observed_on": observed_on.isoformat(),
             },
             idempotency_key=idempotency_key,
@@ -148,7 +156,9 @@ class RfqWorkflow:
                     continue
 
                 if run.state is RfqRunState.ENRICHED_WITH_MEMORY:
-                    requisition, quotes, observed_on = self._workflow_inputs_for(run_id, tenant_id)
+                    requisition, quotes, fx_rates, observed_on = self._workflow_inputs_for(
+                        run_id, tenant_id
+                    )
                     supplier_performance, quote_baselines = self._memory_from_snapshot(
                         quotes,
                         self.memory.payload_for(run_id, tenant_id=tenant_id),
@@ -158,6 +168,7 @@ class RfqWorkflow:
                         quotes,
                         self.pricing_policy,
                         supplier_performance=supplier_performance,
+                        fx_rates=fx_rates,
                     )
                     anomalies = self._detect_anomalies(quotes, quote_baselines, observed_on)
                     self.memory.advance_rfq_run(
@@ -180,7 +191,7 @@ class RfqWorkflow:
                     continue
 
                 if run.state is RfqRunState.ANALYZED:
-                    _, quotes, observed_on = self._workflow_inputs_for(run_id, tenant_id)
+                    _, quotes, _, observed_on = self._workflow_inputs_for(run_id, tenant_id)
                     # Persist only after the prior-window analysis. Repeated
                     # recovery uses tenant/quote upserts, so it cannot duplicate history.
                     for quote in quotes:
@@ -240,20 +251,22 @@ class RfqWorkflow:
 
     def _workflow_inputs_for(
         self, run_id: str, tenant_id: str
-    ) -> tuple[PurchaseRequisition, tuple[NormalizedQuote, ...], date]:
+    ) -> tuple[PurchaseRequisition, tuple[NormalizedQuote, ...], tuple[FxRate, ...], date]:
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
         quotes = tuple(persisted_quote_from_payload(item) for item in payload["quotes"])
+        fx_rates = tuple(FxRate.model_validate(item) for item in payload.get("fx_rates", []))
         assert_unique_quote_identities(quotes)
         return (
             PurchaseRequisition.model_validate(payload["requisition"]),
             quotes,
+            fx_rates,
             date.fromisoformat(payload["observed_on"]),
         )
 
     def _quotes_and_date_for(
         self, run_id: str, tenant_id: str
     ) -> tuple[tuple[NormalizedQuote, ...], date]:
-        _, quotes, observed_on = self._workflow_inputs_for(run_id, tenant_id)
+        _, quotes, _, observed_on = self._workflow_inputs_for(run_id, tenant_id)
         return quotes, observed_on
 
     def _quotes_for(self, run_id: str, tenant_id: str) -> tuple[NormalizedQuote, ...]:

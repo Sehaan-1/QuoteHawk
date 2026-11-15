@@ -115,7 +115,7 @@ export const openApproval = (runId: string) =>
 
 export const decideApproval = (
   runId: string,
-  decision: "approve" | "reject",
+  decision: "approve" | "override" | "reject",
   prototypeBuyerId: string | undefined,
   selectedQuoteId: string,
   note: string,
@@ -125,7 +125,7 @@ export const decideApproval = (
     body: JSON.stringify({
       buyer_id: prototypeBuyerId,
       decision,
-      selected_quote_id: decision === "approve" ? selectedQuoteId : undefined,
+      selected_quote_id: decision === "reject" ? undefined : selectedQuoteId,
       note: note || undefined,
     }),
   });

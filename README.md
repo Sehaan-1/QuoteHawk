@@ -14,8 +14,8 @@ approval gate.
 Tail-spend sourcing is often trapped in supplier emails, PDFs, and spreadsheets.
 QuoteHawk is designed around the control points a production agent needs:
 
-- strict Pydantic contracts around untrusted supplier data, including three-to-five
-  CSV, email-text, or PDF quote artifacts;
+- strict Pydantic contracts around untrusted supplier data, including three-to-fifty
+  CSV, email-text, or PDF quote artifacts plus explicit auditable FX rates;
 - `Decimal`-based landed-cost math rather than opaque model calculations, with
   unit price, freight, shipping, duties, lead-time, MOQ, and payment-term effects;
 - SQLite supplier memory that persists price, freight, delivery, responsiveness,
@@ -32,9 +32,9 @@ retry-safe durable workflow controls, adversarial policy hardening, and audited
 client dependency upgrades while retaining credential-free SQLite demos and the
 earlier API identity boundaries:
 
-- a Next.js five-bid dashboard with landed-cost breakdowns, budget eligibility,
-  supplier-history anomalies, concise SSE audit facts, and a confidential
-  counter-offer drafting action;
+- a Next.js buyer dashboard with a weighted comparison matrix paged in groups of
+  five, landed-cost breakdowns, budget eligibility, supplier-history anomalies,
+  concise SSE audit facts, and a confidential multi-turn counter-offer simulation;
 - deterministic regressions and optional Gemini/ADK evaluation cases for supplier
   prompt injection, malformed commercial data, confidentiality, approval bypass,
   and draft-only execution boundaries;
@@ -45,14 +45,15 @@ earlier API identity boundaries:
   approval actor fields;
 - an explicit Postgres repository with reviewed migration SQL, forced row-level
   tenant security, transaction-local tenant binding, and atomic workflow/approval
-  writes, without a silent SQLite fallback;
+  writes, without a silent SQLite fallback; plus an opt-in Redis supplier-baseline
+  cache and safe RFQ work-signal queue;
 - tenant-scoped RFQ idempotency keys, immutable request fingerprints, deterministic
   resume/recovery, readiness checks, and SQLite/Postgres concurrency regressions;
 - unique RFQ bid identities plus adversarial checks for nested schema injection,
   straightforward competitor-disclosure obfuscation, and false execution claims;
 - current audited client dependencies: Next.js 16 for the buyer workspace and Expo
   SDK 58 with validated web/Android companion exports;
-- a source-ingestion API for three-to-five CSV, unstructured-email, and PDF
+- a source-ingestion API for three-to-fifty CSV, unstructured-email, and PDF
   supplier artifacts, retaining normalized facts rather than raw documents; and
 - a non-root local runtime container, liveness endpoint, reverse-proxy contract,
   and explicit production identity/Postgres/vendor-mail/ERP integration contracts.
@@ -247,7 +248,7 @@ are explicitly approved.
 | Boundary | Rule |
 | --- | --- |
 | Budget | A quote over `max_landed_cost` remains visible but is never approval-ready. |
-| Currency | This prototype rejects currency mismatches; it does not guess FX rates. |
+| Currency | A mismatched supplier currency needs an explicit buyer-supplied rate into the PR currency. QuoteHawk never fetches, guesses, inverts, or silently substitutes FX. |
 | Fees | Freight, shipping, and duties must be present explicitly, even when zero. |
 | Precision | All money uses `Decimal`; SQLite stores canonical decimal text and Postgres stores `NUMERIC`. |
 | Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor identity or exact commercial term is blocked after presentation-normalized checks. |
@@ -286,12 +287,18 @@ are explicitly approved.
     Expo companion use audited current dependency trees with zero production audit
     findings.
 12. **Supplier source ingestion and complete landed cost** — complete: a bounded
-    three-to-five-document CSV/email/PDF RFQ input normalizes without retaining
+    three-to-fifty-document CSV/email/PDF RFQ input normalizes without retaining
     raw artifacts; freight, shipping, duties, lead time, MOQ, and payment terms
     are explicit deterministic cost components.
 13. **Continuous integration guardrails** — complete: credential-free GitHub
     Actions checks enforce the same Python, agents-cli, web, and mobile quality
     gates exercised locally through the root `Makefile`; deployment remains absent.
+14. **Broader sourcing-event coverage** — complete: explicit buyer-supplied FX,
+    Net/prepayment/milestone/letter-of-credit payment structures, 1–50 normalized
+    bids (20 active by default), paged five-bid review, Redis supplier-memory/cache
+    and safe work signals, persisted simulated draft threads, buyer approval or
+    documented eligible-bid override notifications, and safe SSE calculation/draft
+    snapshots. External vendor mail, ERP writes, and binding POs remain absent.
 
 ## Project layout
 
@@ -301,11 +308,11 @@ app/
   domain/models.py         # strict procurement contracts
   analysis/                # rolling baselines and deterministic anomaly detector
   approval/                # allowlisted buyer gate and PO draft models
-  api/                     # REST/SSE routes that emit audit facts only
+  api/                     # REST/SSE routes with safe audit, landed-cost, and draft snapshots
   ingestion/               # fixture, CSV/email/PDF, and optional Gemini extraction
   negotiation/             # confidential fixture/Gemini counter-offer drafts
   policies/pricing.py      # deterministic landed-cost and ranking policy
-  persistence/             # SQLite demo backend, Postgres repository, and reviewed migrations
+  persistence/             # SQLite/Postgres durable stores plus optional Redis cache/work signals
   simulation/              # adversarial supplier tactics
   workflow/                # finite-state RFQ orchestration
 web/                       # Next.js buyer dashboard; typed relative API client, proxy, static export

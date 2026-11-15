@@ -10,6 +10,8 @@ export type RfqState =
 
 export type LandedCost = {
   currency: string;
+  source_currency: string;
+  fx_rate: string;
   line_total: string;
   freight_cost: string;
   shipping_cost: string;
@@ -56,6 +58,14 @@ export type QuoteAnomaly = {
   explanation: string;
 };
 
+export type NegotiationThreadMessage = {
+  round_number: number;
+  speaker: "buyer" | "supplier";
+  subject: string;
+  body: string;
+  status: "simulated_draft_only";
+};
+
 export type CounterOfferDraft = {
   run_id: string;
   vendor_id: string;
@@ -65,6 +75,7 @@ export type CounterOfferDraft = {
   currency: string;
   status: "draft_only";
   disclosure_check: string;
+  thread: NegotiationThreadMessage[];
 };
 
 export type RfqRunDetail = {
@@ -79,6 +90,7 @@ export type RfqRunDetail = {
     quotes: Quote[];
     comparison: { currency: string; ranked_quotes: QuoteScore[] };
     anomalies: QuoteAnomaly[];
+    counter_offer_drafts?: Record<string, CounterOfferDraft>;
   };
   purchase_order_draft: {
     vendor_name: string;
