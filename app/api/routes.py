@@ -13,6 +13,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from psycopg.errors import UniqueViolation
+from psycopg_pool import PoolTimeout
 from pydantic import ValidationError
 
 from app.api.models import (
@@ -122,6 +123,15 @@ def configure_quotehawk_api(
         configured_memory,
         max_target_reduction_rate=configured_pricing_policy.negotiation_threshold_rate,
     )
+
+
+def close_quotehawk_api_persistence(app: FastAPI) -> None:
+    """Release optional pooled persistence resources during the real app shutdown."""
+
+    memory = getattr(app.state, "quotehawk_memory", None)
+    close = getattr(memory, "close", None)
+    if callable(close):
+        close()
 
 
 def _configure_safe_api_observability(app: FastAPI) -> None:
@@ -258,6 +268,11 @@ def _raise_http_error(error: Exception) -> Never:
         ) from error
     if isinstance(error, (AuthorizationError, PermissionError)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    if isinstance(error, PoolTimeout):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Postgres connection pool is temporarily unavailable; retry the request.",
+        ) from error
     if isinstance(error, ConcurrentRunUpdateError):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

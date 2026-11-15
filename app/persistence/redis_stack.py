@@ -145,6 +145,16 @@ class RedisSupplierMemory:
     ) -> str:
         return f"quotehawk:{kind}:{_digest(tenant_id, vendor_id, currency.upper(), self._version(tenant_id, vendor_id, currency), *details)}"
 
+    def close(self) -> None:
+        """Close Redis and the wrapped durable repository when the application stops."""
+
+        close_client = getattr(self.client, "close", None)
+        if callable(close_client):
+            close_client()
+        close_repository = getattr(self.repository, "close", None)
+        if callable(close_repository):
+            close_repository()
+
     def readiness_check(self) -> None:
         self.repository.readiness_check()
         self.client.ping()
