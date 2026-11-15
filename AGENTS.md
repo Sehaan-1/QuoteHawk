@@ -96,6 +96,9 @@ agents-cli info
   to change it. Avoid hand-writing A2A integration.
 - Do not change the configured Gemini model without explicit user approval.
 - Keep all credentials in ignored `.env`; `.env.example` may contain names only.
+- Keep Ruff's mutable-default check (`B006`) and every Ty rule enforced in CI. Do
+  not add global rule ignores or blanket type suppressions; fix the type boundary
+  or document a narrowly scoped, reviewed exception instead.
 
 ## Tests
 

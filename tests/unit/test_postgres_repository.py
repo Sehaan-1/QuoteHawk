@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from psycopg_pool import ConnectionPool
+from typing_extensions import override
 
 from app.persistence.factory import repository_from_environment
 from app.persistence.postgres import _MIGRATIONS, PostgresSupplierMemory, _migration_statements
@@ -47,7 +49,7 @@ class _RecordingConnection:
             "updated_at": datetime(2026, 11, 14, tzinfo=UTC),
         }
 
-    def transaction(self):  # type: ignore[no-untyped-def]
+    def transaction(self) -> AbstractContextManager[None]:
         return nullcontext()
 
     def execute(self, statement: str, parameters: tuple[object, ...] | None = None) -> _Cursor:
@@ -55,7 +57,7 @@ class _RecordingConnection:
         if statement.strip() == "SELECT version FROM quotehawk.schema_migrations":
             return _Cursor(rows=[{"version": version} for version in self.migration_versions])
         if "FROM quotehawk.schema_migrations" in statement:
-            version = parameters[0] if parameters else ""
+            version = parameters[0] if parameters is not None and parameters else ""
             return _Cursor(row={"present": 1} if version in self.migration_versions else None)
         if statement.startswith("INSERT INTO quotehawk.schema_migrations"):
             assert parameters is not None
@@ -94,7 +96,7 @@ class _RecordingPool:
         self.open_calls.append(wait)
 
     @contextmanager
-    def connection(self):  # type: ignore[no-untyped-def]
+    def connection(self) -> Generator[_RecordingConnection, None, None]:
         self.borrow_count += 1
         try:
             yield self._connection
@@ -108,6 +110,7 @@ class _RecordingPool:
 class _ReplayIdempotencyConnection(_RecordingConnection):
     """Offline Postgres response for a matching existing idempotency record."""
 
+    @override
     def execute(self, statement: str, parameters: tuple[object, ...] | None = None) -> _Cursor:
         if "SELECT run_id, request_fingerprint" in statement:
             self.calls.append((statement, parameters))
@@ -132,7 +135,7 @@ class _StaleCasConnection:
         self.calls: list[tuple[str, tuple[object, ...] | None]] = []
         self.closed = False
 
-    def transaction(self):  # type: ignore[no-untyped-def]
+    def transaction(self) -> AbstractContextManager[None]:
         return nullcontext()
 
     def execute(self, statement: str, parameters: tuple[object, ...] | None = None) -> _Cursor:

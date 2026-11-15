@@ -492,8 +492,14 @@ class PostgresSupplierMemory:
                     ).fetchone()
                     if existing is None:
                         raise RuntimeError("idempotency conflict could not be loaded")
-                    existing_run_id = existing["run_id"]
-                    existing_fingerprint = existing["request_fingerprint"]
+                    stored_run_id = existing["run_id"]
+                    stored_fingerprint = existing["request_fingerprint"]
+                    if not isinstance(stored_run_id, str) or not isinstance(
+                        stored_fingerprint, str
+                    ):
+                        raise RuntimeError("persisted idempotency record is malformed")
+                    existing_run_id = stored_run_id
+                    existing_fingerprint = stored_fingerprint
                     if existing_fingerprint != request_fingerprint:
                         raise IdempotencyConflictError(
                             "idempotency key was already used for a different RFQ submission"
@@ -1042,7 +1048,13 @@ class PostgresSupplierMemory:
                 """,
                 (tenant_id, vendor_id, currency.upper()),
             ).fetchall()
-        return tuple(row["observed_on"] for row in rows)
+        observed_dates: list[date] = []
+        for row in rows:
+            observed_on = row["observed_on"]
+            if not isinstance(observed_on, date):
+                raise ValueError("persisted observation date is malformed")
+            observed_dates.append(observed_on)
+        return tuple(observed_dates)
 
     @staticmethod
     def _next_event_sequence(connection: Any, run_id: str, tenant_id: str) -> int:
@@ -1083,8 +1095,8 @@ class PostgresSupplierMemory:
                 sequence,
                 occurred_at,
                 event_type,
-                from_state.value if from_state else None,
-                to_state.value if to_state else None,
+                from_state.value if from_state is not None else None,
+                to_state.value if to_state is not None else None,
                 reason,
                 Jsonb(dict(details)),
             ),

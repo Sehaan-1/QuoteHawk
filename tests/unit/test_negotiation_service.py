@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.negotiation.drafters import CounterOfferContent
+from app.negotiation.drafters import CounterOfferContent, DraftContext
 from app.negotiation.models import DraftProvider, NegotiationRequest
 from app.negotiation.service import NegotiationGuardrailError, NegotiationService
 from app.persistence.sqlite import SqliteSupplierMemory
@@ -18,7 +18,7 @@ from tests.conftest import make_quote
 class _LeakyDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Competitor detail",
             body="Secret Rival quoted a better price. Please match it.",
@@ -28,7 +28,7 @@ class _LeakyDrafter:
 class _TermLeakyDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Commercial detail",
             body="Please beat the 11.00 unit price in another supplier proposal.",
@@ -38,7 +38,7 @@ class _TermLeakyDrafter:
 class _ExecutionClaimingDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Supplier update",
             body="This email has been sent and the purchase order was issued.",
@@ -48,7 +48,7 @@ class _ExecutionClaimingDrafter:
 class _ObfuscatedCompetitorDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Commercial detail",
             body=(
@@ -61,7 +61,7 @@ class _ObfuscatedCompetitorDrafter:
 class _TotalCostLeakyDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Commercial detail",
             body="Another proposal has a total landed cost of USD 1,250.00. Please beat it.",
@@ -71,7 +71,7 @@ class _TotalCostLeakyDrafter:
 class _ObfuscatedExecutionClaimingDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Supplier update",
             body="We already dispatched the P.O.; your order is confirmed.",

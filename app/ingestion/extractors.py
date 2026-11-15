@@ -64,7 +64,7 @@ class GeminiQuoteExtractor:
 
     def __init__(self, *, model_name: str | None = None) -> None:
         api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        if not api_key:
+        if api_key is None or api_key == "":
             raise ValueError("Gemini extraction requires GOOGLE_API_KEY or GEMINI_API_KEY")
         self.model_name = model_name or os.getenv("MODEL_NAME", "gemini-3.8-flash")
         self.client = genai.Client(api_key=api_key)
@@ -226,12 +226,15 @@ class RuleBasedQuoteExtractor:
 
         normalized_rows: list[dict[str, str]] = []
         for row in rows:
-            if row.get(None):
+            extra_columns = row.get(None)
+            if isinstance(extra_columns, list) and extra_columns:
                 raise DocumentExtractionError(
                     "CSV supplier document has an unexpected extra column"
                 )
+            if extra_columns is not None and not isinstance(extra_columns, list):
+                raise DocumentExtractionError("CSV supplier document has invalid extra-column data")
             normalized_row = {
-                header: (row.get(original_header) or "").strip()
+                header: value.strip() if isinstance(value := row.get(original_header), str) else ""
                 for original_header, header in zip(reader.fieldnames, headers, strict=True)
             }
             if not any(normalized_row.values()):
@@ -389,7 +392,10 @@ class RuleBasedQuoteExtractor:
         match = cls._MONEY_PATTERN.fullmatch(compact)
         if match is None:
             raise DocumentExtractionError(f"supplier {field_name} must be a numeric amount")
-        return match.group(1)
+        amount = match.group(1)
+        if not isinstance(amount, str):
+            raise DocumentExtractionError(f"supplier {field_name} must be a numeric amount")
+        return amount
 
     @classmethod
     def _decimal_text(cls, value: str, field_name: str) -> str:

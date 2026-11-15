@@ -43,7 +43,7 @@ class UrllibApprovalWebhookTransport:
         request = Request(url, data=body, headers=headers, method="POST")
         try:
             with urlopen(request, timeout=5) as response:
-                return response.status
+                return int(response.status)
         except (HTTPError, URLError) as error:
             raise ApprovalWebhookError("buyer approval webhook delivery failed") from error
 
