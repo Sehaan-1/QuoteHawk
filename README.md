@@ -27,7 +27,7 @@ QuoteHawk is designed around the control points a production agent needs:
 - Google ADK and `google-agents-cli` scaffolding for the optional Gemini agent,
   evaluations, and a later deployment path.
 
-## Current milestones — PRs 7–13
+## Current milestones 
 
 The prototype now includes a production-oriented Postgres persistence path,
 retry-safe durable workflow controls, adversarial policy hardening, and audited
