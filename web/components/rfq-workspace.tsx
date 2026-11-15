@@ -50,9 +50,15 @@ export function RfqWorkspace() {
     const firstEligible = detail.payload.comparison.ranked_quotes.find(
       (score) => score.approval_ready,
     );
-    setSelectedQuoteId(firstEligible?.quote_id ?? "");
+    const nextQuoteId = firstEligible?.quote_id ?? "";
+    const nextVendorId = detail.payload.quotes.find(
+      (quote) => quote.quote_id === nextQuoteId,
+    )?.vendor_id;
+    setSelectedQuoteId(nextQuoteId);
     setStreamEvents(detail.audit_events);
-    setCounterOffer(null);
+    setCounterOffer(
+      nextVendorId ? detail.payload.counter_offer_drafts?.[nextVendorId] ?? null : null,
+    );
   }, [detail]);
 
   useEffect(() => {
@@ -80,7 +86,19 @@ export function RfqWorkspace() {
       }
     };
 
+    const onCounterOffer = (event: Event) => {
+      try {
+        const draft = JSON.parse((event as MessageEvent<string>).data) as CounterOfferDraft;
+        if (!isCounterOfferDraft(draft)) throw new Error("invalid counter-offer draft");
+        setCounterOffer(draft);
+      } catch {
+        eventSource.close();
+        setStreamStatus("unavailable");
+      }
+    };
+
     eventSource.addEventListener("rfq.audit", onAudit);
+    eventSource.addEventListener("rfq.counter_offer", onCounterOffer);
     eventSource.addEventListener("rfq.complete", () => {
       eventSource.close();
       setStreamStatus("available");
@@ -123,7 +141,7 @@ export function RfqWorkspace() {
       const result = await getRun(demoRunId);
       setDetail(result);
       setRunId(result.run.run_id);
-      setMessage("Created a local five-bid fixture. Nothing was sent to a supplier or ERP.");
+      setMessage("Created a local five-bid review fixture. Nothing was sent to a supplier or ERP.");
     } catch (reason) {
       setError(messageFor(reason, "Could not create the fixture run."));
     } finally {
@@ -148,10 +166,14 @@ export function RfqWorkspace() {
     }
   }
 
-  async function submitDecision(decision: "approve" | "reject") {
+  async function submitDecision(decision: "approve" | "override" | "reject") {
     if (!detail) return;
-    if (decision === "approve" && (!selectedScore || !selectedScore.approval_ready)) {
-      setError("Select an eligible quote before approving a draft.");
+    if (decision !== "reject" && (!selectedScore || !selectedScore.approval_ready)) {
+      setError("Select an eligible quote before creating a draft.");
+      return;
+    }
+    if (decision === "override" && !note.trim()) {
+      setError("Document why the eligible supplier selection needs an override.");
       return;
     }
 
@@ -171,9 +193,19 @@ export function RfqWorkspace() {
       setMessage(
         decision === "approve"
           ? "The buyer decision created a non-binding PO draft. No order was issued."
+          : decision === "override"
+          ? "The documented override created an eligible non-binding PO draft. No order was issued."
           : "The buyer rejected this RFQ outcome. No draft was created.",
       );
     } catch (reason) {
+      // A configured webhook can fail after the local draft-only decision is durable.
+      // Refresh so the approval card reflects that authoritative state rather than
+      // inviting a duplicate click.
+      try {
+        setDetail(await getRun(detail.run.run_id));
+      } catch {
+        // Preserve the original action error if a recovery read also fails.
+      }
       setError(messageFor(reason, "Could not record the buyer decision."));
     } finally {
       setAction(null);
@@ -202,7 +234,8 @@ export function RfqWorkspace() {
 
   function selectQuote(quoteId: string) {
     setSelectedQuoteId(quoteId);
-    setCounterOffer(null);
+    const vendorId = detail?.payload.quotes.find((quote) => quote.quote_id === quoteId)?.vendor_id;
+    setCounterOffer(vendorId ? detail?.payload.counter_offer_drafts?.[vendorId] ?? null : null);
   }
 
   return (
@@ -260,6 +293,16 @@ function isAuditEvent(value: unknown): value is AuditEvent {
     && typeof candidate.occurred_at === "string"
     && typeof candidate.event_type === "string"
     && typeof candidate.reason === "string"
+  );
+}
+
+function isCounterOfferDraft(value: unknown): value is CounterOfferDraft {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<CounterOfferDraft>;
+  return (
+    candidate.status === "draft_only"
+    && typeof candidate.vendor_id === "string"
+    && Array.isArray(candidate.thread)
   );
 }
 

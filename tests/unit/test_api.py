@@ -366,6 +366,8 @@ def test_api_runs_workflow_streams_audit_and_creates_a_draft(requisition, tmp_pa
     assert events.status_code == 200
     assert events.headers["content-type"].startswith("text/event-stream")
     assert "event: rfq.audit" in events.text
+    assert "event: rfq.landed_cost" in events.text
+    assert "event: rfq.counter_offer" in events.text
     assert "buyer_approved_draft" in events.text
     assert "reasoning" not in events.text.lower()
 

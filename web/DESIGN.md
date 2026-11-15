@@ -2,7 +2,7 @@
 
 **Kind:** software — a draft-only RFQ approval workspace for procurement buyers.
 
-**Facts used:** QuoteHawk compares up to five supplier bids; landed-cost math and anomaly checks are deterministic; the workflow ends in a non-binding `draft_only` PO payload; a buyer must approve; no email, ERP write-back, or binding PO is exposed. The local prototype default buyer ID is `demo-buyer`.
+**Facts used:** QuoteHawk compares a configurable supplier field (20 bids by default, 50 maximum) in pages of five; landed-cost math and anomaly checks are deterministic; FX conversion requires an explicit supplied rate; the workflow ends in a non-binding `draft_only` PO payload; a buyer must approve; no email, ERP write-back, or binding PO is exposed. A local prototype buyer identity is entered explicitly and is never authoritative in OIDC mode.
 
 **Voice:** technical-dry. Exact, not cold; buyer-facing, not supplier-facing; mostly 8–16 word sentences. House words: RFQ, bid, landed cost, draft, buyer. Never: vendor outreach claims, execution claims, invented savings or performance figures.
 
@@ -12,7 +12,7 @@
 
 **Screen plan:**
 1. `hero` — the RFQ approval workspace and draft-only boundary; actual RFQ workspace UI; 1 screen; product UI visual and hero entrance.
-2. `comparison` — one five-bid comparison matrix, landed-cost figures and approval eligibility; 1 screen; product UI visual.
+2. `comparison` — one five-bid page of the weighted comparison matrix, landed-cost figures and approval eligibility; 1 screen; product UI visual.
 3. `review` — anomalies and concise audit timeline, no model reasoning; 1 screen; event-flow diagram and one type-led moment.
 4. `decision` — buyer decision card and non-binding PO-draft status; 1 screen; approval panel visual.
 5. `close` — local prototype setup and API boundary; 1 screen; large type close.

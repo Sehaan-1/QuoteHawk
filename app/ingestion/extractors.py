@@ -16,6 +16,7 @@ import json
 import os
 import re
 from collections.abc import Iterable
+from decimal import Decimal
 from enum import StrEnum
 from typing import ClassVar, Protocol
 
@@ -133,6 +134,8 @@ class RuleBasedQuoteExtractor:
         "minimum_order_quantity",
         "quality_penalty",
         "early_payment_discount_rate",
+        "payment_term_days",
+        "payment_milestones",
         "valid_until",
     )
     _CSV_LINE_FIELDS = ("sku", "quoted_quantity", "unit_price")
@@ -157,6 +160,10 @@ class RuleBasedQuoteExtractor:
         "lead_time": "lead_time_days",
         "lead_time_days": "lead_time_days",
         "payment_terms": "payment_terms",
+        "payment_term_days": "payment_term_days",
+        "letter_of_credit_days": "payment_term_days",
+        "payment_milestones": "payment_milestones",
+        "milestones": "payment_milestones",
         "minimum_order_quantity": "minimum_order_quantity",
         "moq": "minimum_order_quantity",
         "quality_penalty": "quality_penalty",
@@ -173,6 +180,10 @@ class RuleBasedQuoteExtractor:
     _DECIMAL_PATTERN = re.compile(r"^-?\d+(?:\.\d+)?$")
     _LEAD_TIME_PATTERN = re.compile(r"^(\d+)\s*(?:business\s*)?days?$", re.I)
     _PAYMENT_TERM_PATTERN = re.compile(r"^net[ _-]?(\d+)$", re.I)
+    _MILESTONE_PATTERN = re.compile(
+        r"(?P<percentage>\d+(?:\.\d+)?)\s*%\s*(?:at|@|due)?\s*(?P<days>\d+)\s*days?",
+        re.I,
+    )
 
     def extract_text(self, raw_quote: str, *, source: QuoteSource) -> NormalizedQuote:
         """Parse one text artifact into a strict quote without model credentials."""
@@ -236,6 +247,7 @@ class RuleBasedQuoteExtractor:
                 value = self._single_csv_value(normalized_rows, field, required=False)
                 if value is not None:
                     payload[field] = value
+        self._normalize_structured_payment_values(payload)
         payload["source"] = source
         payload["lines"] = [
             {
@@ -323,6 +335,7 @@ class RuleBasedQuoteExtractor:
             "minimum_order_quantity",
             "quality_penalty",
             "early_payment_discount_rate",
+            "payment_term_days",
         ):
             value = payload.get(field)
             if isinstance(value, str):
@@ -331,12 +344,44 @@ class RuleBasedQuoteExtractor:
         if isinstance(lead_time, str):
             match = self._LEAD_TIME_PATTERN.fullmatch(lead_time.strip())
             payload["lead_time_days"] = match.group(1) if match is not None else lead_time
+        self._normalize_structured_payment_values(payload)
+
+    def _normalize_structured_payment_values(self, payload: dict[str, object]) -> None:
         payment_terms = payload.get("payment_terms")
         if isinstance(payment_terms, str):
+            compact_terms = _normalized_key(payment_terms)
             match = self._PAYMENT_TERM_PATTERN.fullmatch(payment_terms.strip())
-            payload["payment_terms"] = (
-                f"net_{match.group(1)}" if match is not None else payment_terms
-            )
+            if match is not None:
+                payload["payment_terms"] = f"net_{match.group(1)}"
+            elif compact_terms in {"prepaid", "prepayment", "cash_in_advance"}:
+                payload["payment_terms"] = "prepayment"
+            elif compact_terms in {"letter_of_credit", "letter_credit", "lc"}:
+                payload["payment_terms"] = "letter_of_credit"
+            elif compact_terms in {"milestone", "milestone_billing"}:
+                payload["payment_terms"] = "milestone"
+        milestones = payload.get("payment_milestones")
+        if isinstance(milestones, str):
+            stripped_milestones = milestones.strip()
+            if stripped_milestones.startswith("["):
+                try:
+                    payload["payment_milestones"] = json.loads(stripped_milestones)
+                except json.JSONDecodeError as error:
+                    raise DocumentExtractionError(
+                        "supplier payment milestones must be valid JSON or percentage/day pairs"
+                    ) from error
+            else:
+                parsed = [
+                    {
+                        "percentage": str(Decimal(match.group("percentage")) / Decimal("100")),
+                        "due_days": match.group("days"),
+                    }
+                    for match in self._MILESTONE_PATTERN.finditer(stripped_milestones)
+                ]
+                if not parsed:
+                    raise DocumentExtractionError(
+                        "supplier payment milestones must contain percentage and due-day pairs"
+                    )
+                payload["payment_milestones"] = parsed
 
     @classmethod
     def _money_text(cls, value: str, field_name: str) -> str:
