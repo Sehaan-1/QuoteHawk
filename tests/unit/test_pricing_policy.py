@@ -36,11 +36,12 @@ def test_landed_cost_includes_hidden_commercial_costs(requisition) -> None:
     policy = PricingPolicy(
         included_lead_time_days=7,
         lead_time_penalty_per_day=Decimal("5"),
-        target_payment_days=60,
         daily_financing_rate=Decimal("0.0005"),
     )
 
-    result = calculate_landed_cost(requisition, quote, policy)
+    result = calculate_landed_cost(
+        requisition.model_copy(update={"target_payment_days": 60}), quote, policy
+    )
 
     assert result.line_total == Decimal("1000.00")
     assert result.lead_time_penalty == Decimal("15.00")
@@ -122,9 +123,9 @@ def test_milestone_and_letter_of_credit_terms_have_deterministic_effective_days(
     assert milestone_quote.effective_payment_days == 36
     assert letter_of_credit_quote.effective_payment_days == 75
     comparison = compare_quotes(
-        requisition,
+        requisition.model_copy(update={"target_payment_days": 90}),
         [milestone_quote, letter_of_credit_quote],
-        PricingPolicy(target_payment_days=90, daily_financing_rate=Decimal("0.001")),
+        PricingPolicy(daily_financing_rate=Decimal("0.001")),
     )
     assert comparison.ranked_quotes[0].quote_id == "Q-LC"
 
