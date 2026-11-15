@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
+
+import pytest
 
 from app.domain.models import SupplierObservation
 from app.negotiation.models import NegotiationRequest
@@ -45,6 +48,16 @@ class _FakeRedis:
 
     def ping(self) -> bool:
         return True
+
+
+def test_redis_url_explains_how_to_install_the_optional_extra(tmp_path, monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "redis", None)
+
+    with pytest.raises(RuntimeError, match=r"uv sync --extra redis"):
+        RedisSupplierMemory.from_url(
+            SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3"),
+            "redis://localhost:6379/0",
+        )
 
 
 def test_redis_supplier_memory_caches_baselines_and_invalidates_on_observation(tmp_path) -> None:

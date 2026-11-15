@@ -110,8 +110,8 @@ scaffolded with [Google agents-cli](https://github.com/google/agents-cli) 1.14.0
 # one-time tools
 uv tool install google-agents-cli
 
-# dependencies (including test dependencies)
-uv sync --all-groups --all-extras
+# default prototype, test, and static-analysis dependencies (Redis remains optional)
+uv sync --all-groups --extra lint
 
 # credential-free deterministic tests, including FastAPI + SQLite HTTP integration coverage
 uv run pytest
@@ -151,6 +151,29 @@ connection pool (defaults: min `1`, max `10`, timeout `5` seconds) configured wi
 `QUOTEHAWK_POSTGRES_POOL_TIMEOUT_SECONDS`. Keep the DSN in a secret manager and
 follow the [Postgres migration contract](docs/production-integration-contracts.md#postgres-repository-and-migration-contract)
 before any production proposal.
+
+## Optional Redis cache and work queue
+
+Redis is **not required** for the default SQLite prototype, FastAPI/SQLite
+integration tests, or a single-process local demo. It becomes required only when
+you deliberately set `QUOTEHAWK_REDIS_URL` to share supplier-baseline caching and
+RFQ work signals across processes. The selected SQLite or Postgres repository
+remains the durable audit source of truth; Redis stores only versioned cache data
+and queue items containing a run ID, tenant ID, and event type.
+
+Install the optional dependency before configuring the URL:
+
+```bash
+uv sync --extra redis
+export QUOTEHAWK_REDIS_URL='rediss://quotehawk-cache.example:6380/0'
+```
+
+Once configured, Redis is a required part of the selected runtime: QuoteHawk
+checks it during readiness and surfaces connection failures rather than silently
+falling back to an in-process cache. If the package is absent, startup explains
+that `uv sync --extra redis` is required. See the
+[Redis supplier memory and queue contract](docs/production-integration-contracts.md#redis-supplier-memory-and-queue-contract)
+for TLS, ACL, retention, and data-boundary requirements.
 
 ## Local container, logs, and runtime boundary
 
