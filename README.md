@@ -291,7 +291,7 @@ are explicitly approved.
 | Untrusted text | Fixture/Gemini extraction treats supplier text as data, rejects unknown/malformed schema fields, and never grants document instructions policy authority. |
 | Observability | Local structured logs correlate safe request/run facts only; they exclude bodies, commercial values, credentials, error text, and model reasoning. |
 
-## Planned PR sequence
+## Planned  sequence
 
 1. **Foundation and trust boundaries** — complete.
 2. **Stateful workflow and anomalies** — complete.
