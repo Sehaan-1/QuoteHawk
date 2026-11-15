@@ -42,7 +42,7 @@ class BuyerApproval(BaseModel):
             and self.selected_quote_id is None
         ):
             raise ValueError("an approved or overridden PO draft requires a selected quote")
-        if self.decision is ApprovalDecision.OVERRIDE and not self.note:
+        if self.decision is ApprovalDecision.OVERRIDE and self.note in {None, ""}:
             raise ValueError("a buyer override requires a documented reason")
         if self.decision is ApprovalDecision.REJECT and self.selected_quote_id is not None:
             raise ValueError("a rejected approval cannot select a quote")

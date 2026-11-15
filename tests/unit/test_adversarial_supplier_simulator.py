@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.models import NormalizedQuote
-from app.negotiation.drafters import CounterOfferContent
+from app.negotiation.drafters import CounterOfferContent, DraftContext
 from app.negotiation.models import DraftProvider, NegotiationRequest
 from app.negotiation.service import NegotiationGuardrailError, NegotiationService
 from app.persistence.sqlite import SqliteSupplierMemory
@@ -75,7 +75,7 @@ def test_international_bid_requires_a_buyer_provided_fx_rate(requisition) -> Non
 class _LeakageDrafter:
     provider = DraftProvider.FIXTURE
 
-    def draft(self, context):  # type: ignore[no-untyped-def]
+    def draft(self, context: DraftContext) -> CounterOfferContent:
         return CounterOfferContent(
             subject="Competitor detail",
             body="Secret Rival offered a lower price. Please match it.",

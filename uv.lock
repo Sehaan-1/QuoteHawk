@@ -2989,6 +2989,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "redis" },
+    { name = "typing-extensions" },
 ]
 
 [package.optional-dependencies]
@@ -3029,6 +3030,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.2,<7.0" },
     { name = "ruff", marker = "extra == 'lint'", specifier = ">=0.4.6,<1.0.0" },
     { name = "ty", marker = "extra == 'lint'", specifier = ">=0.0.1a0" },
+    { name = "typing-extensions", specifier = ">=4.12,<5.0" },
 ]
 provides-extras = ["eval", "lint"]
 

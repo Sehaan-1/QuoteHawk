@@ -1,6 +1,8 @@
 """Local LLM-as-judge for `custom_response_quality` (see eval_config.yaml)."""
 
 import threading
+from collections.abc import Mapping
+from typing import Any, cast
 
 from google import genai
 from google.genai import types
@@ -27,10 +29,10 @@ def _client() -> genai.Client:
     if client is None:
         # AI Studio (GEMINI_API_KEY) or Gemini platform (ADC).
         client = _local.client = genai.Client()
-    return client
+    return cast(genai.Client, client)
 
 
-def evaluate(instance):
+def evaluate(instance: Mapping[str, Any]) -> dict[str, int | str]:
     reference = instance.get("reference")
     rubric = (
         "Grade the agent's final response on a 1-5 scale (1 poor, 5 excellent) for "
