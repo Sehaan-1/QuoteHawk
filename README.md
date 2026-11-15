@@ -113,8 +113,11 @@ uv tool install google-agents-cli
 # dependencies (including test dependencies)
 uv sync --all-groups --all-extras
 
-# credential-free deterministic tests
+# credential-free deterministic tests, including FastAPI + SQLite HTTP integration coverage
 uv run pytest
+
+# run only the production-shaped FastAPI/SQLite HTTP boundary checks
+uv run pytest -m integration
 
 # optional static checks
 uv run ruff check .
@@ -307,6 +310,9 @@ are explicitly approved.
     and safe work signals, persisted simulated draft threads, buyer approval or
     documented eligible-bid override notifications, and safe SSE calculation/draft
     snapshots. External vendor mail, ERP writes, and binding POs remain absent.
+15. **FastAPI/SQLite integration coverage** — complete: production-shaped app
+    lifecycle tests exercise HTTP response serialization, OIDC role and tenant
+    boundaries, durable SQLite workflow state, and reconnect-safe SSE output.
 
 ## Project layout
 
@@ -328,6 +334,7 @@ mobile/                    # Expo buyer approval companion
 .github/workflows/ci.yml   # credential-free push/PR quality gate
 Makefile                   # local equivalents of the CI quality targets
 tests/unit/                # credential-free policy, API, approval, and workflow tests
+tests/integration/         # production-shaped FastAPI + SQLite HTTP-boundary tests
 .agents-cli-spec.md        # approved product/safety specification
 agents-cli-manifest.yaml   # agents-cli scaffold metadata
 ```
