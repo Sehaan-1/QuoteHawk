@@ -31,7 +31,8 @@ identity or terms, or bypass buyer approval.
   tenant and eligible within-budget quote, and produces a non-binding draft only.
   The allowlist exists solely for the explicit local `prototype` fallback.
 - `app/negotiation/` passes only recipient data plus an anonymized target to a
-  provider, blocks competitor names in output, and has no sending tool.
+  provider, blocks competitor identities and exact commercial terms (including
+  straightforward presentation obfuscation) in output, and has no sending tool.
 - `app/ingestion/` validates fixture or Gemini output against `NormalizedQuote`
   before it can reach policy code.
 - `app/api/` exposes concise audit facts over REST/SSE; never stream chain of
