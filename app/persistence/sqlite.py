@@ -430,8 +430,12 @@ class SqliteSupplierMemory:
                 if existing is None:
                     raise
                 created = False
-                existing_run_id = existing["run_id"]
-                existing_fingerprint = existing["request_fingerprint"]
+                stored_run_id = existing["run_id"]
+                stored_fingerprint = existing["request_fingerprint"]
+                if not isinstance(stored_run_id, str) or not isinstance(stored_fingerprint, str):
+                    raise RuntimeError("persisted idempotency record is malformed") from None
+                existing_run_id = stored_run_id
+                existing_fingerprint = stored_fingerprint
                 if existing_fingerprint != request_fingerprint:
                     raise IdempotencyConflictError(
                         "idempotency key was already used for a different RFQ submission"
@@ -1006,8 +1010,8 @@ class SqliteSupplierMemory:
                 sequence,
                 occurred_at.isoformat(),
                 event_type,
-                from_state.value if from_state else None,
-                to_state.value if to_state else None,
+                from_state.value if from_state is not None else None,
+                to_state.value if to_state is not None else None,
                 reason,
                 json.dumps(dict(details), sort_keys=True),
             ),

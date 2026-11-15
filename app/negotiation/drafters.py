@@ -67,7 +67,7 @@ class GeminiCounterOfferDrafter:
 
     def __init__(self, *, model_name: str | None = None) -> None:
         api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        if not api_key:
+        if api_key is None or api_key == "":
             raise ValueError("Gemini drafting requires GOOGLE_API_KEY or GEMINI_API_KEY")
         self.model_name = model_name or os.getenv("MODEL_NAME", "gemini-3.8-flash")
         self.client = genai.Client(api_key=api_key)

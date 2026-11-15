@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 from time import perf_counter
-from typing import Never
+from typing import Never, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from psycopg.errors import UniqueViolation
 from psycopg_pool import PoolTimeout
 from pydantic import ValidationError
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api.models import (
     QuoteExtractionRequest,
@@ -152,7 +153,9 @@ def _configure_safe_api_observability(app: FastAPI) -> None:
         )
 
     @app.middleware("http")
-    async def correlate_and_measure(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def correlate_and_measure(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         request_id = new_or_valid_request_id(request.headers.get(REQUEST_ID_HEADER))
         request.state.request_id = request_id
         token = bind_request_id(request_id)
@@ -209,15 +212,15 @@ def _services(request: Request) -> tuple[RfqWorkflow, ApprovalService, Negotiati
     if not hasattr(request.app.state, "quotehawk_workflow"):
         configure_quotehawk_api(request.app)
     return (
-        request.app.state.quotehawk_workflow,
-        request.app.state.quotehawk_approvals,
-        request.app.state.quotehawk_negotiation,
+        cast(RfqWorkflow, request.app.state.quotehawk_workflow),
+        cast(ApprovalService, request.app.state.quotehawk_approvals),
+        cast(NegotiationService, request.app.state.quotehawk_negotiation),
     )
 
 
 def _memory(request: Request) -> QuoteHawkRepository:
     _services(request)
-    return request.app.state.quotehawk_memory
+    return cast(QuoteHawkRepository, request.app.state.quotehawk_memory)
 
 
 def _principal(
@@ -227,7 +230,7 @@ def _principal(
     prototype_buyer_id: str | None = None,
 ) -> AuthenticatedPrincipal:
     _services(request)
-    authenticator: RequestAuthenticator = request.app.state.quotehawk_authenticator
+    authenticator = cast(RequestAuthenticator, request.app.state.quotehawk_authenticator)
     principal = authenticator.authenticate(
         request.headers.get("Authorization"),
         prototype_buyer_id=prototype_buyer_id,

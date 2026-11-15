@@ -37,9 +37,11 @@ _AGENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 @functools.cache
 def get_session_service():
     """Process-wide session service shared across every serving surface."""
-    if uri := os.environ.get("SESSION_SERVICE_URI"):
+    uri = os.environ.get("SESSION_SERVICE_URI")
+    if uri is not None and uri != "":
         return create_session_service_from_options(base_dir=_AGENT_DIR, session_service_uri=uri)
-    if agent_engine_id := os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID"):
+    agent_engine_id = os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID")
+    if agent_engine_id is not None and agent_engine_id != "":
         from google.adk.sessions.vertex_ai_session_service import VertexAiSessionService
 
         return VertexAiSessionService(
@@ -58,7 +60,8 @@ def get_session_service():
 @functools.cache
 def get_artifact_service():
     """Process-wide artifact service: GCS when a bucket is set, else in-memory."""
-    if bucket := os.environ.get("LOGS_BUCKET_NAME"):
+    bucket = os.environ.get("LOGS_BUCKET_NAME")
+    if bucket is not None and bucket != "":
         return GcsArtifactService(bucket_name=bucket)
     return InMemoryArtifactService()
 

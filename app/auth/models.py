@@ -65,7 +65,7 @@ class OidcSettings:
             self.write_role,
             self.approve_role,
         )
-        if any(not isinstance(value, str) or not value.strip() for value in required_values):
+        if any(not value.strip() for value in required_values):
             raise ValueError("OIDC verifier settings must not contain empty values")
         parsed_jwks_url = urlparse(self.jwks_url)
         if parsed_jwks_url.scheme != "https" or not parsed_jwks_url.netloc:
