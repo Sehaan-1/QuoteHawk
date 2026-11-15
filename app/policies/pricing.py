@@ -113,6 +113,7 @@ def calculate_landed_cost(
     total = (
         line_total
         + quote.freight_cost
+        + quote.shipping_cost
         + quote.duties_cost
         + lead_time_penalty
         + minimum_order_penalty
@@ -127,6 +128,7 @@ def calculate_landed_cost(
         currency=requisition.currency,
         line_total=_money(line_total),
         freight_cost=_money(quote.freight_cost),
+        shipping_cost=_money(quote.shipping_cost),
         duties_cost=_money(quote.duties_cost),
         lead_time_penalty=_money(lead_time_penalty),
         minimum_order_penalty=_money(minimum_order_penalty),

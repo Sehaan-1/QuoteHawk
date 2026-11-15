@@ -8,7 +8,7 @@ models, but business policy only receives validated objects. Monetary values use
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -24,6 +24,7 @@ class QuoteSource(StrEnum):
 
     CSV = "csv"
     EMAIL = "email"
+    PDF = "pdf"
     PDF_TEXT = "pdf_text"
     MANUAL = "manual"
     SIMULATOR = "simulator"
@@ -94,8 +95,8 @@ class QuoteLine(BaseModel):
 class NormalizedQuote(BaseModel):
     """A strict normalized quotation used by deterministic policy code.
 
-    Shipping and duties are intentionally required, including when their value is
-    zero. This prevents a parser or supplier from silently omitting a fee.
+    Freight, shipping, and duties are intentionally required, including when each
+    value is zero. This prevents a parser or supplier from silently omitting a fee.
     """
 
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
@@ -108,6 +109,7 @@ class NormalizedQuote(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     lines: tuple[QuoteLine, ...] = Field(min_length=1, max_length=50)
     freight_cost: Money = Field(ge=0, max_digits=14, decimal_places=2)
+    shipping_cost: Money = Field(ge=0, max_digits=14, decimal_places=2)
     duties_cost: Money = Field(ge=0, max_digits=14, decimal_places=2)
     lead_time_days: int = Field(ge=0, le=730)
     payment_terms: PaymentTerms
@@ -132,6 +134,20 @@ class NormalizedQuote(BaseModel):
         if len(skus) != len(set(skus)):
             raise ValueError("quote line SKUs must be unique")
         return self
+
+
+def persisted_quote_from_payload(payload: Mapping[str, object]) -> NormalizedQuote:
+    """Read a durable quote snapshot while preserving the pre-shipping schema.
+
+    Releases before the explicit ``shipping_cost`` component represented shipping
+    within freight. New HTTP/source inputs must include shipping, but existing
+    draft-only workflow snapshots stay resumable with their documented legacy
+    zero-separate-shipping interpretation.
+    """
+
+    if "shipping_cost" not in payload:
+        return NormalizedQuote.model_validate({**payload, "shipping_cost": "0"})
+    return NormalizedQuote.model_validate(payload)
 
 
 def assert_unique_quote_identities(quotes: Iterable[NormalizedQuote]) -> None:
@@ -163,6 +179,7 @@ class LandedCostBreakdown(BaseModel):
     currency: str
     line_total: Money = Field(ge=0)
     freight_cost: Money = Field(ge=0)
+    shipping_cost: Money = Field(ge=0)
     duties_cost: Money = Field(ge=0)
     lead_time_penalty: Money = Field(ge=0)
     minimum_order_penalty: Money = Field(ge=0)

@@ -12,6 +12,7 @@ export type LandedCost = {
   currency: string;
   line_total: string;
   freight_cost: string;
+  shipping_cost: string;
   duties_cost: string;
   lead_time_penalty: string;
   minimum_order_penalty: string;
