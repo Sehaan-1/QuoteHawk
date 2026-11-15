@@ -17,7 +17,6 @@ dependencies = [
     "pydantic>=2.10,<3.0",
     "psycopg[binary]>=3.2,<4.0",
     "psycopg-pool>=3.2,<4.0",
-    "redis>=5.2,<7.0",
     "pypdf>=5.0,<7.0",
     "PyJWT[crypto]>=2.10,<3.0",
     "python-dotenv>=1.0,<2.0",
@@ -31,6 +30,8 @@ dev = [
 ]
 
 [project.optional-dependencies]
+# Redis is needed only when QUOTEHAWK_REDIS_URL enables the cache/work queue.
+redis = ["redis>=5.2,<7.0"]
 eval = [
     "google-adk[eval]>=2.12.0,<3.0.0",
     "google-cloud-aiplatform[evaluation]>=2.2.0,<3.0.0",

@@ -13,6 +13,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from datetime import date
+from importlib import import_module
 from typing import Any, Protocol, cast
 
 from app.analysis.models import SupplierQuoteBaseline
@@ -113,11 +114,20 @@ class RedisSupplierMemory:
         cache_ttl_seconds: int = 300,
         queue_name: str = "quotehawk:rfq-work",
     ) -> RedisSupplierMemory:
-        """Create a production client only when the explicitly configured URL works."""
+        """Create a Redis client after the optional package and configured URL are present."""
 
-        from redis import Redis
+        try:
+            redis_module = import_module("redis")
+        except ModuleNotFoundError as error:
+            if error.name == "redis":
+                raise RuntimeError(
+                    "QUOTEHAWK_REDIS_URL requires the optional Redis dependency; "
+                    "install it with `uv sync --extra redis`."
+                ) from error
+            raise
 
-        client = Redis.from_url(redis_url, decode_responses=True)
+        redis_client = redis_module.Redis
+        client = redis_client.from_url(redis_url, decode_responses=True)
         client.ping()
         return cls(
             repository,

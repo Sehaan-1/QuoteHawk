@@ -211,9 +211,12 @@ outside source, client bundles, and logs.
 
 ## Redis supplier memory and queue contract
 
-Setting `QUOTEHAWK_REDIS_URL` explicitly enables Redis as the tenant-scoped
-supplier-baseline cache and RFQ work-signal queue. Redis cache keys are derived
-from tenant/vendor/currency values and versioned whenever supplier history changes;
+Redis is optional for the default SQLite prototype and becomes required only when
+`QUOTEHAWK_REDIS_URL` explicitly enables it as the tenant-scoped supplier-baseline
+cache and RFQ work-signal queue. Install its optional package before setting that
+URL with `uv sync --extra redis`; QuoteHawk raises a clear configuration error if
+the URL is set without the package. Redis cache keys are derived from
+tenant/vendor/currency values and versioned whenever supplier history changes;
 workers receive only run ID, tenant ID, and event type, then reload durable facts
 from the selected SQLite/Postgres repository. Raw supplier documents, full request
 bodies, hidden reasoning, and commercial counter-offer contents are never placed on
