@@ -117,6 +117,12 @@ class PurchaseRequisition(BaseModel):
     items: tuple[RequisitionLine, ...] = Field(min_length=1, max_length=50)
     max_landed_cost: Money = Field(ge=0, max_digits=14, decimal_places=2)
     target_lead_time_days: int = Field(ge=0, le=365)
+    target_payment_days: int = Field(
+        default=30,
+        ge=0,
+        le=730,
+        description="Buyer-preferred payment timing used for payment-term scoring and financing cost.",
+    )
     required_by: date | None = None
 
     @field_validator("currency")

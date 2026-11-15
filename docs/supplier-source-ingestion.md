@@ -54,6 +54,11 @@ bounded to three through fifty documents, and each document must normalize to on
 unique supplier/vendor bid. A workflow additionally enforces its configured
 comparison capacity (20 by default, 50 maximum).
 
+The requisition's optional `target_payment_days` records the buyer's preferred
+payment timing (Net 30 when omitted for legacy compatibility). Payment-term fit
+scores are centered on that target, rather than on the longest supplier term in
+the event; it is also the basis for any financing penalty on shorter terms.
+
 `rule_based` is the credential-free default. `gemini` is an explicit opt-in
 provider when `GOOGLE_API_KEY` or `GEMINI_API_KEY` is configured. Both providers
 return through the exact same strict Pydantic schema and deterministic policy

@@ -59,7 +59,6 @@ class PricingPolicy(BaseModel):
 
     included_lead_time_days: int | None = Field(default=None, ge=0, le=365)
     lead_time_penalty_per_day: Decimal = Field(default=Decimal("0"), ge=0)
-    target_payment_days: int = Field(default=60, ge=0, le=120)
     daily_financing_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
     max_quotes_per_run: int = Field(default=20, ge=1, le=50)
     negotiation_threshold_rate: Decimal = Field(default=Decimal("0.15"), gt=0, le=1)
@@ -142,7 +141,7 @@ def calculate_landed_cost(
     )
     delayed_days = max(quote.lead_time_days - included_lead_time, 0)
     lead_time_penalty = Decimal(delayed_days) * policy.lead_time_penalty_per_day
-    financing_days = max(policy.target_payment_days - quote.effective_payment_days, 0)
+    financing_days = max(requisition.target_payment_days - quote.effective_payment_days, 0)
     payment_term_penalty = line_total * Decimal(financing_days) * policy.daily_financing_rate
     early_payment_discount = line_total * quote.early_payment_discount_rate
 
@@ -188,6 +187,20 @@ def _ratio_score(numerator: Decimal, denominator: Decimal) -> Decimal:
     return (numerator / denominator) * HUNDRED
 
 
+def _payment_term_fit_score(effective_days: int, target_days: int) -> Decimal:
+    """Score payment timing against the buyer's stated target, never the longest bid.
+
+    Exact target timing scores 100. The score declines linearly with absolute
+    distance from that target and reaches zero at one target-length of deviation.
+    A target of zero is a strict prepayment preference: only zero-day terms fit.
+    """
+
+    if target_days == 0:
+        return HUNDRED if effective_days == 0 else Decimal("0")
+    deviation = abs(Decimal(effective_days - target_days))
+    return max(Decimal("0"), HUNDRED - (deviation / Decimal(target_days)) * HUNDRED)
+
+
 def compare_quotes(
     requisition: PurchaseRequisition,
     quotes: list[NormalizedQuote] | tuple[NormalizedQuote, ...],
@@ -216,15 +229,14 @@ def compare_quotes(
     ]
     lowest_landed_cost = min(item.total_landed_cost for item in breakdowns)
     shortest_lead_time = min(quote.lead_time_days for quote in quotes)
-    longest_payment_term = max(quote.effective_payment_days for quote in quotes)
     weights = policy.score_weights
 
     scored_quotes: list[QuoteScore] = []
     for quote, breakdown in zip(quotes, breakdowns, strict=True):
         price_score = _ratio_score(lowest_landed_cost, breakdown.total_landed_cost)
         lead_time_score = _ratio_score(Decimal(shortest_lead_time), Decimal(quote.lead_time_days))
-        payment_term_score = _ratio_score(
-            Decimal(quote.effective_payment_days), Decimal(longest_payment_term)
+        payment_term_score = _payment_term_fit_score(
+            quote.effective_payment_days, requisition.target_payment_days
         )
         raw_performance = performance.get(quote.vendor_id, DEFAULT_PERFORMANCE_SCORE)
         if not Decimal("0") <= raw_performance <= Decimal("1"):

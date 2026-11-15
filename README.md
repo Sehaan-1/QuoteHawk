@@ -18,6 +18,8 @@ QuoteHawk is designed around the control points a production agent needs:
   CSV, email-text, or PDF quote artifacts plus explicit auditable FX rates;
 - `Decimal`-based landed-cost math rather than opaque model calculations, with
   unit price, freight, shipping, duties, lead-time, MOQ, and payment-term effects;
+  payment-fit scores center on each requisition's recorded buyer target instead of
+  rewarding whichever supplier offers the longest term;
 - SQLite supplier memory that persists price, freight, delivery, responsiveness,
   and discount observations across runs;
 - an explainable weighted multi-bid comparison that cannot select an over-budget

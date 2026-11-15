@@ -119,11 +119,19 @@ export function ComparisonPanel({
 }
 
 function RunSummary({ detail, currency }: { detail: RfqRunDetail; currency: string }) {
+  const paymentTarget = detail.payload.requisition.target_payment_days;
+  const paymentPreference = paymentTarget === undefined
+    ? "Not recorded"
+    : paymentTarget === 0
+      ? "Prepayment"
+      : `Net ${paymentTarget}`;
+
   return (
     <div className="run-strip">
       <div><span>Run</span><strong>{detail.run.run_id}</strong></div>
       <div><span>Requisition</span><strong>{detail.run.requisition_id}</strong></div>
       <div><span>Budget ceiling</span><strong>{formatMoney(detail.payload.requisition.max_landed_cost, currency)}</strong></div>
+      <div><span>Payment preference</span><strong>{paymentPreference}</strong></div>
       <div><span>Workflow state</span><strong className={`state state-${detail.run.state}`}>{stateLabel[detail.run.state]}</strong></div>
     </div>
   );
