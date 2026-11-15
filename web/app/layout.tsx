@@ -28,6 +28,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Mona+Sans:wdth,wght@75..125,400..600&display=swap"
           rel="stylesheet"
         />
+        <link href="/taste/moments/iris-opens/moment.css" rel="stylesheet" />
         <script
           dangerouslySetInnerHTML={{
             __html:
