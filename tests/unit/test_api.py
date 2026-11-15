@@ -114,6 +114,38 @@ def test_api_rejects_unexpected_action_fields_before_business_logic(requisition,
     assert client.get("/api/rfq/runs/unexpected-action-run").status_code == 404
 
 
+def test_api_rejects_ambiguous_duplicate_quote_and_vendor_identity_before_workflow(
+    requisition, tmp_path
+) -> None:
+    client = _client(tmp_path)
+    duplicate_quote_id = _submission(requisition, run_id="duplicate-quote-id")
+    duplicate_quote_id["quotes"] = [
+        make_quote(quote_id="DUPLICATE", vendor_id="vendor-alpha").model_dump(mode="json"),
+        make_quote(quote_id="DUPLICATE", vendor_id="vendor-bravo").model_dump(mode="json"),
+    ]
+    duplicate_vendor = _submission(requisition, run_id="duplicate-vendor-id")
+    duplicate_vendor["quotes"] = [
+        make_quote(quote_id="ALPHA-ONE", vendor_id="vendor-alpha").model_dump(mode="json"),
+        make_quote(quote_id="ALPHA-TWO", vendor_id="VENDOR-ALPHA").model_dump(mode="json"),
+    ]
+
+    duplicate_quote_response = client.post("/api/rfq/runs", json=duplicate_quote_id)
+    duplicate_vendor_response = client.post("/api/rfq/runs", json=duplicate_vendor)
+
+    assert duplicate_quote_response.status_code == 422
+    assert duplicate_vendor_response.status_code == 422
+    assert (
+        duplicate_quote_response.json()["detail"]
+        == "request does not satisfy the QuoteHawk API contract"
+    )
+    assert (
+        duplicate_vendor_response.json()["detail"]
+        == "request does not satisfy the QuoteHawk API contract"
+    )
+    assert client.get("/api/rfq/runs/duplicate-quote-id").status_code == 404
+    assert client.get("/api/rfq/runs/duplicate-vendor-id").status_code == 404
+
+
 def test_api_structured_event_correlates_request_and_run_without_commercial_payload(
     requisition, tmp_path
 ) -> None:

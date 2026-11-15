@@ -31,6 +31,24 @@ def test_fixture_extractor_rejects_omitted_commercial_terms(requisition) -> None
         FixtureQuoteExtractor().extract(raw_quote)
 
 
+def test_fixture_extractor_rejects_nested_supplier_instruction_fields(requisition) -> None:
+    raw_quote = json.dumps(
+        AdversarialSupplierSimulator(requisition).raw_quote(SupplierTactic.NESTED_PROMPT_INJECTION)
+    )
+
+    with pytest.raises(ValidationError, match="supplier_instruction"):
+        FixtureQuoteExtractor().extract(raw_quote)
+
+
+def test_fixture_extractor_rejects_duplicate_supplier_line_skus(requisition) -> None:
+    raw_quote = json.dumps(
+        AdversarialSupplierSimulator(requisition).raw_quote(SupplierTactic.DUPLICATE_LINE_SKU)
+    )
+
+    with pytest.raises(ValidationError, match="SKUs must be unique"):
+        FixtureQuoteExtractor().extract(raw_quote)
+
+
 def test_fixture_extractor_rejects_supplier_prompt_injection_fields(requisition) -> None:
     raw_quote = json.dumps(
         AdversarialSupplierSimulator(requisition).raw_quote(SupplierTactic.PROMPT_INJECTION)

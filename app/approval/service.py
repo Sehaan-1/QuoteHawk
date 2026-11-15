@@ -17,7 +17,12 @@ from app.approval.models import (
     PurchaseOrderLine,
 )
 from app.auth.models import DEFAULT_TENANT_ID, AuthenticatedPrincipal, AuthMode
-from app.domain.models import NormalizedQuote, PurchaseRequisition, QuoteComparison
+from app.domain.models import (
+    NormalizedQuote,
+    PurchaseRequisition,
+    QuoteComparison,
+    assert_unique_quote_identities,
+)
 from app.persistence.repository import QuoteHawkRepository
 from app.workflow.models import RfqRunState
 
@@ -65,6 +70,7 @@ class ApprovalService:
         run = self.memory.load_rfq_run(run_id, tenant_id=tenant_id)
         if run.state is not RfqRunState.NEGOTIATION_OR_READY:
             raise ApprovalError("RFQ run is not ready to request buyer approval")
+        self._quotes_for(run_id, tenant_id=tenant_id)
         comparison = self._comparison(run_id, tenant_id=tenant_id)
         eligible_quotes = tuple(score for score in comparison.ranked_quotes if score.approval_ready)
         if not eligible_quotes:
@@ -168,13 +174,9 @@ class ApprovalService:
 
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
         requisition = PurchaseRequisition.model_validate(payload["requisition"])
+        quotes = self._quotes_for(run_id, tenant_id=tenant_id)
         quote = next(
-            (
-                NormalizedQuote.model_validate(candidate)
-                for candidate in payload["quotes"]
-                if candidate["quote_id"] == selected_quote_id
-            ),
-            None,
+            (candidate for candidate in quotes if candidate.quote_id == selected_quote_id), None
         )
         if quote is None:
             raise ApprovalError("selected quote payload is not available")
@@ -201,6 +203,17 @@ class ApprovalService:
             approved_by=buyer_id,
             created_at=created_at,
         )
+
+    def _quotes_for(self, run_id: str, *, tenant_id: str) -> tuple[NormalizedQuote, ...]:
+        """Load legacy snapshots defensively before opening or resolving approval."""
+
+        payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
+        quotes = tuple(NormalizedQuote.model_validate(candidate) for candidate in payload["quotes"])
+        try:
+            assert_unique_quote_identities(quotes)
+        except ValueError as error:
+            raise ApprovalError("RFQ run contains ambiguous supplier bid identities") from error
+        return quotes
 
     def _comparison(self, run_id: str, *, tenant_id: str) -> QuoteComparison:
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
