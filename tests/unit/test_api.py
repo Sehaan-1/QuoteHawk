@@ -7,10 +7,12 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from psycopg_pool import PoolTimeout
 
-from app.api.routes import configure_quotehawk_api, router
+from app.api.routes import _raise_http_error, configure_quotehawk_api, router
 from app.approval.service import BuyerApprovalPolicy
 from app.observability import REQUEST_ID_HEADER
 from app.persistence.sqlite import SqliteSupplierMemory
@@ -40,6 +42,17 @@ def _client(tmp_path) -> TestClient:
     )
     app.include_router(router)
     return TestClient(app)
+
+
+def test_api_maps_a_bounded_pool_wait_to_a_safe_retryable_response() -> None:
+    with pytest.raises(HTTPException) as response:
+        _raise_http_error(PoolTimeout("database connections are busy"))
+
+    assert response.value.status_code == 503
+    assert (
+        response.value.detail
+        == "Postgres connection pool is temporarily unavailable; retry the request."
+    )
 
 
 def _submission(requisition, *, run_id: str) -> dict[str, object]:

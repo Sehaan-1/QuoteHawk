@@ -167,6 +167,21 @@ SQLite when the Postgres backend is selected. The migration records its own vers
 in `quotehawk.schema_migrations`; take a backup and use a reviewed change window
 before any future migration version.
 
+`PostgresSupplierMemory` uses a lazy `psycopg_pool.ConnectionPool` per API process,
+not one raw database connection per repository call. The first repository operation
+opens the pool; every operation borrows a connection, wraps it in a transaction,
+sets tenant-local RLS context, and returns it only after commit/rollback. API
+shutdown closes the pool and its workers. Configure each API process with
+`QUOTEHAWK_POSTGRES_POOL_MIN_SIZE` (default `1`),
+`QUOTEHAWK_POSTGRES_POOL_MAX_SIZE` (default `10`), and
+`QUOTEHAWK_POSTGRES_POOL_TIMEOUT_SECONDS` (default `5`). Keep the maximum below
+the database's per-service connection budget after accounting for replicas,
+workers, migrations, and administrative access. Invalid bounds (`0 <= min <= max`)
+or non-positive timeouts prevent startup; the pool never falls back to opening an
+unbounded connection per request. A checked-out connection wait that exceeds the
+configured timeout maps to a body-safe `503` retry response rather than leaking a
+DSN, database error, or tenant context.
+
 The reviewed resiliency migration
 [`../app/persistence/migrations/0002_workflow_resiliency.sql`](../app/persistence/migrations/0002_workflow_resiliency.sql)
 adds a tenant-scoped unique idempotency key and immutable request fingerprint to RFQ
