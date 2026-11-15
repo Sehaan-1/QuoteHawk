@@ -24,7 +24,27 @@ class NegotiationRequest(BaseModel):
 
     vendor_id: str = Field(min_length=1, max_length=80)
     target_landed_cost: Decimal = Field(gt=0)
+    simulated_rounds: int = Field(default=2, ge=2, le=5)
     provider: DraftProvider = DraftProvider.FIXTURE
+
+
+class NegotiationSpeaker(StrEnum):
+    """A simulated draft-thread participant; neither side sends a message."""
+
+    BUYER = "buyer"
+    SUPPLIER = "supplier"
+
+
+class NegotiationThreadMessage(BaseModel):
+    """One reviewable message in a deterministic, non-delivered negotiation thread."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    round_number: int = Field(ge=1, le=5)
+    speaker: NegotiationSpeaker
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=4000)
+    status: Literal["simulated_draft_only"] = "simulated_draft_only"
 
 
 class CounterOfferDraft(BaseModel):
@@ -42,3 +62,4 @@ class CounterOfferDraft(BaseModel):
     created_at: datetime
     status: Literal["draft_only"] = "draft_only"
     disclosure_check: str = "passed"
+    thread: tuple[NegotiationThreadMessage, ...] = Field(min_length=4, max_length=10)

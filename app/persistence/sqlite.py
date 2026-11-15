@@ -24,6 +24,7 @@ from app.domain.models import (
     SupplierBaseline,
     SupplierObservation,
 )
+from app.negotiation.models import CounterOfferDraft
 from app.persistence.repository import (
     ConcurrentRunUpdateError,
     IdempotencyConflictError,
@@ -296,7 +297,7 @@ class SqliteSupplierMemory:
                     str(_average_quote_unit_price(quote)),
                     str(quote.freight_cost),
                     quote.lead_time_days,
-                    quote.payment_terms.days,
+                    quote.effective_payment_days,
                 ),
             )
 
@@ -594,7 +595,7 @@ class SqliteSupplierMemory:
         change, audit event, and optional PO-draft record.
         """
 
-        if approval.decision is ApprovalDecision.APPROVE:
+        if approval.decision in {ApprovalDecision.APPROVE, ApprovalDecision.OVERRIDE}:
             if purchase_order_draft is None or approval.selected_quote_id is None:
                 raise ValueError(
                     "an approved decision requires a selected quote and purchase-order draft"
@@ -613,7 +614,7 @@ class SqliteSupplierMemory:
 
         target_state = (
             RfqRunState.APPROVED_DRAFT
-            if approval.decision is ApprovalDecision.APPROVE
+            if approval.decision in {ApprovalDecision.APPROVE, ApprovalDecision.OVERRIDE}
             else RfqRunState.REJECTED
         )
         with self._connection() as connection:
@@ -712,12 +713,18 @@ class SqliteSupplierMemory:
                 sequence=self._next_event_sequence(connection, approval.run_id),
                 occurred_at=approval.decided_at,
                 event_type=(
-                    "buyer_approved_draft" if purchase_order_draft is not None else "buyer_rejected"
+                    "buyer_overrode_draft"
+                    if approval.decision is ApprovalDecision.OVERRIDE
+                    else "buyer_approved_draft"
+                    if purchase_order_draft is not None
+                    else "buyer_rejected"
                 ),
                 from_state=from_state,
                 to_state=target_state,
                 reason=(
-                    "Authorized buyer approved a non-binding PO draft."
+                    "Authorized buyer recorded a documented override for an eligible non-binding PO draft."
+                    if approval.decision is ApprovalDecision.OVERRIDE
+                    else "Authorized buyer approved a non-binding PO draft."
                     if purchase_order_draft is not None
                     else "Authorized buyer rejected the RFQ outcome."
                 ),
@@ -812,6 +819,72 @@ class SqliteSupplierMemory:
                 to_state=None,
                 reason=reason,
                 details=dict(details or {}),
+            )
+
+    def store_counter_offer_draft(
+        self,
+        *,
+        draft: CounterOfferDraft,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> None:
+        """Persist one simulated, buyer-reviewable thread and its safe audit fact."""
+
+        now = _utc_now()
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT state, version, payload_json FROM rfq_runs
+                WHERE run_id = ? AND tenant_id = ?
+                """,
+                (draft.run_id, tenant_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown RFQ run {draft.run_id}")
+            if RfqRunState(row["state"]) is not RfqRunState.NEGOTIATION_OR_READY:
+                raise InvalidStateTransition(
+                    "counter-offer drafts can only be stored before buyer approval opens"
+                )
+            payload = json.loads(row["payload_json"])
+            stored_drafts = payload.get("counter_offer_drafts", {})
+            if not isinstance(stored_drafts, dict):
+                raise ValueError("RFQ run contains invalid counter-offer draft storage")
+            stored_drafts[draft.vendor_id] = draft.model_dump(mode="json")
+            payload["counter_offer_drafts"] = stored_drafts
+            version = int(row["version"]) + 1
+            updated = connection.execute(
+                """
+                UPDATE rfq_runs
+                SET version = ?, updated_at = ?, payload_json = ?
+                WHERE run_id = ? AND tenant_id = ? AND version = ?
+                """,
+                (
+                    version,
+                    now.isoformat(),
+                    json.dumps(payload, sort_keys=True),
+                    draft.run_id,
+                    tenant_id,
+                    version - 1,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ConcurrentRunUpdateError(
+                    "RFQ run changed concurrently; retry from persisted state"
+                )
+            self._insert_event(
+                connection,
+                run_id=draft.run_id,
+                sequence=self._next_event_sequence(connection, draft.run_id),
+                occurred_at=now,
+                event_type="counter_offer_drafted",
+                from_state=None,
+                to_state=None,
+                reason="A draft-only simulated negotiation thread was stored for buyer review.",
+                details={
+                    "vendor_id": draft.vendor_id,
+                    "provider": draft.provider.value,
+                    "simulated_rounds": len(draft.thread) // 2,
+                    "execution_boundary": "draft_only",
+                },
             )
 
     def load_rfq_run(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> RfqRun:

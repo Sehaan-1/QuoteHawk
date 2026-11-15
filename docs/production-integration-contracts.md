@@ -63,7 +63,12 @@ proxy, APM SDK, error tracker, or custom middleware without a data review.
 
 Persisted RFQ audit events are a separate business record. They retain concise
 state-transition facts for a run and must not be treated as application logs or
-expanded to contain model reasoning.
+expanded to contain model reasoning. `GET /api/rfq/runs/{run_id}/events` projects
+those facts as finite reconnect-safe SSE snapshots (`rfq.audit`) and, when newly
+calculated/drafted, sends authenticated buyer-visible `rfq.landed_cost` and
+`rfq.counter_offer` snapshots. These events contain validated derived results and
+draft-only thread text, never raw source artifacts, prompts, hidden reasoning, or
+an outbound-send command. Clients may reconnect with `Last-Event-ID`.
 
 ## Browser workspace and reverse-proxy contract
 
@@ -111,6 +116,37 @@ Do not make a UI control, a model instruction, a header named `admin`, or an OAu
 scope alone equivalent to a policy override. Any future override needs an explicit,
 reviewed product requirement and its own durable authorization/audit path.
 
+## Buyer approval webhook contract
+
+An optional `QUOTEHAWK_APPROVAL_WEBHOOK_URL` plus
+`QUOTEHAWK_APPROVAL_WEBHOOK_SECRET` enables a buyer-decision notification after the
+approval service has durably recorded the decision and any `draft_only` purchase
+order draft. Both settings must be present together, and the endpoint must be
+HTTPS. The request has `Content-Type: application/json`, an `Idempotency-Key` equal
+to a generated event UUID, and an `X-QuoteHawk-Signature` HMAC-SHA256 over the raw
+body using the configured secret. Receivers must deduplicate by `Idempotency-Key`
+and verify that signature before processing.
+
+The fixed payload is an `ApprovalWebhookEvent`: event ID/type, run/tenant/buyer
+identifiers, approve/override/reject decision, selected quote ID, optional draft
+ID, timestamp, and `execution_boundary: "draft_only"`. A documented override may
+select another **eligible in-budget** bid; it cannot bypass the budget guardrail.
+It intentionally contains no
+vendor address, vendor-message content, ERP endpoint, raw source document,
+commercial line detail, or command/action field. Treat it as an audit/notification
+integration only—not an authorization to contact a vendor or create a PO.
+
+The dispatch attempt is deliberately fail-closed and non-retrying. Its event UUID is
+deterministically derived from the durable decision, so a receiver can safely
+recognize duplicate delivery attempts by `Idempotency-Key`. A non-2xx or transport
+failure returns `502` to the approving client **after** the local draft-only
+decision has been recorded, and appends a safe
+`buyer_approval_webhook_failed` audit event. An API retry cannot repeat the
+approval transition; a production receiver must make its own notification workflow
+idempotent. A successful dispatch similarly appends
+`buyer_approval_webhook_dispatched`. QuoteHawk has no outbound vendor-email,
+ERP-write, or binding-PO transport in this flow.
+
 ## Postgres repository and migration contract
 
 QuoteHawk now includes `PostgresSupplierMemory`, selected only when
@@ -157,6 +193,23 @@ policies, providing defense in depth against an accidentally unscoped query. The
 application database role must not bypass row-level security; restrict its schema
 privileges, use TLS, retain backups/encryption/retention controls, and keep the DSN
 outside source, client bundles, and logs.
+
+## Redis supplier memory and queue contract
+
+Setting `QUOTEHAWK_REDIS_URL` explicitly enables Redis as the tenant-scoped
+supplier-baseline cache and RFQ work-signal queue. Redis cache keys are derived
+from tenant/vendor/currency values and versioned whenever supplier history changes;
+workers receive only run ID, tenant ID, and event type, then reload durable facts
+from the selected SQLite/Postgres repository. Raw supplier documents, full request
+bodies, hidden reasoning, and commercial counter-offer contents are never placed on
+the queue.
+
+A Redis connection failure is a readiness failure once configured; QuoteHawk does
+not silently degrade to an in-process cache. A production owner must provision
+TLS, authentication, network isolation, eviction/retention settings, backup as
+appropriate for the selected durable repository, and least-privilege ACLs. Redis
+is not an approval override mechanism and queue delivery never creates a vendor
+message, ERP write, or binding PO.
 
 ## Vendor mail and ERP integration contract
 

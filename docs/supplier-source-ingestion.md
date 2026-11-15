@@ -1,9 +1,12 @@
 # Supplier source-ingestion contract
 
-QuoteHawk accepts **three to five** supplier quote artifacts for one purchase
+QuoteHawk accepts **three to fifty** supplier quote artifacts for one purchase
 requisition through `POST /api/rfq/source-runs`. It normalizes each artifact into
 a strict `NormalizedQuote`, then runs the same tenant-scoped, draft-only RFQ
-workflow used for already-normalized fixture submissions.
+workflow used for already-normalized fixture submissions. The deterministic
+comparison limit defaults to 20 and is explicitly configurable up to 50 with
+`QUOTEHAWK_MAX_QUOTES_PER_RUN`; the buyer workspace pages the matrix in groups of
+five so a large sourcing event remains reviewable.
 
 This is an ingestion boundary, not a vendor mailbox or an invoice archive:
 
@@ -30,6 +33,15 @@ This is an ingestion boundary, not a vendor mailbox or an invoice archive:
       "filename": "supplier-quote.pdf"
     }
   ],
+  "fx_rates": [
+    {
+      "source_currency": "EUR",
+      "target_currency": "USD",
+      "rate": "1.08250000",
+      "as_of": "2026-11-14",
+      "source": "buyer_supplied"
+    }
+  ],
   "provider": "rule_based",
   "observed_on": "2026-11-14",
   "run_id": "optional-client-run-id"
@@ -38,8 +50,9 @@ This is an ingestion boundary, not a vendor mailbox or an invoice archive:
 
 `source` may be `csv`, `email`, `pdf`, or `pdf_text`. `pdf` is base64 encoded;
 all other source types must use plain text. The source count is deliberately
-bounded to three through five documents, and each document must normalize to one
-unique supplier/vendor bid.
+bounded to three through fifty documents, and each document must normalize to one
+unique supplier/vendor bid. A workflow additionally enforces its configured
+comparison capacity (20 by default, 50 maximum).
 
 `rule_based` is the credential-free default. `gemini` is an explicit opt-in
 provider when `GOOGLE_API_KEY` or `GEMINI_API_KEY` is configured. Both providers
@@ -55,14 +68,18 @@ when it is written as zero; a missing value is rejected.
 - quote ID, requisition ID, stable vendor ID, vendor name, and currency;
 - one or more SKU, quoted-quantity, and unit-price lines;
 - freight, **shipping**, and duties as separate amounts;
-- lead time, MOQ, and supported payment terms (`Net 30` or `Net 60`, with the
-  existing `Net 10`/`Net 45` contract also accepted).
+- lead time, MOQ, and payment structure: Net 0/10/15/30/45/60/90/120,
+  prepayment, letter of credit (with declared timing), or milestone billing
+  (with declared percentage/day milestones).
 
 Optional quality penalty, early-payment discount rate, and validity date retain
 the existing normalized-quote contract. Landed cost deterministically includes
 unit-price line totals, freight, shipping, duties, lead-time penalties, MOQ
 penalties, and any configured payment-term financing penalty. It uses `Decimal`
-throughout and never delegates calculations or ranking to Gemini.
+throughout and never delegates calculations or ranking to Gemini. A currency
+mismatch requires an explicit `fx_rates` entry from the quote currency to the
+requisition currency; QuoteHawk never guesses, fetches, or silently inverts a
+rate. The rate and original quote currency appear in the persisted cost breakdown.
 
 ## Rule-based CSV format
 
@@ -75,7 +92,11 @@ CSV-QUOTE-1,PR-1001,vendor-csv,CSV Supply,USD,100.00,35.00,50.00,7,net_30,100,FI
 ```
 
 Optional supported headers are `quality_penalty`, `early_payment_discount_rate`,
-and `valid_until`. Repeat scalar quote values consistently on every line. Column
+`payment_term_days`, `payment_milestones`, and `valid_until`. For milestone
+billing, use `payment_terms=milestone` plus `payment_milestones` as a JSON array
+of `{ "percentage": "0.50", "due_days": 30 }` values that sum to 1.00. For a
+letter of credit, use `payment_terms=letter_of_credit` plus
+`payment_term_days`. Repeat scalar quote values consistently on every line. Column
 names may use spaces or hyphens in place of underscores; unknown, duplicate, or
 conflicting columns/values are rejected.
 
@@ -101,7 +122,9 @@ Line Item: FILTER-10 | 100 | USD 10.00
 ```
 
 The line separator can be a vertical bar, comma, or semicolon. The order is SKU,
-quoted quantity, unit price. Text-based PDFs use this exact parser after local
+quoted quantity, unit price. Rule-based email accepts `Prepayment`, `Letter of
+Credit` (with `Letter of Credit Days`), and `Milestone` terms. Milestones may be
+written as `50% at 0 days; 50% at 60 days`. Text-based PDFs use this exact parser after local
 text extraction with `pypdf`; encrypted PDFs, oversized PDFs, and PDFs without
 extractable text are rejected by `rule_based`. An explicitly configured Gemini
 provider may receive a bounded PDF directly for model-assisted extraction, but

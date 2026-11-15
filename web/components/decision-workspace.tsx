@@ -16,7 +16,7 @@ type DecisionWorkspaceProps = {
   onPrototypeBuyerIdChange: (buyerId: string) => void;
   onNoteChange: (note: string) => void;
   onOpenApproval: () => void;
-  onDecision: (decision: "approve" | "reject") => void;
+  onDecision: (decision: "approve" | "override" | "reject") => void;
   onPrepareCounterOffer: () => void;
 };
 
@@ -150,10 +150,14 @@ function ApprovalPanel({
           {detail.run.state === "negotiation_or_ready" ? (
             <button className="button button-primary full-button" type="button" onClick={onOpenApproval} disabled={isWorking || !eligibleScores.length}>Open buyer review</button>
           ) : detail.run.state === "awaiting_approval" ? (
-            <div className="decision-actions">
-              <button className="button button-primary" type="button" onClick={() => onDecision("approve")} disabled={isWorking || !eligibleScores.some((score) => score.quote_id === selectedQuoteId)}>Approve PO draft</button>
-              <button className="button button-danger" type="button" onClick={() => onDecision("reject")} disabled={isWorking}>Reject RFQ outcome</button>
-            </div>
+            <>
+              <div className="decision-actions">
+                <button className="button button-primary" type="button" onClick={() => onDecision("approve")} disabled={isWorking || !eligibleScores.some((score) => score.quote_id === selectedQuoteId)}>Approve PO draft</button>
+                <button className="button button-secondary" type="button" onClick={() => onDecision("override")} disabled={isWorking || !note.trim() || !eligibleScores.some((score) => score.quote_id === selectedQuoteId)}>Documented override</button>
+                <button className="button button-danger" type="button" onClick={() => onDecision("reject")} disabled={isWorking}>Reject RFQ outcome</button>
+              </div>
+              <p className="field-hint">An override still requires an eligible in-budget quote and a documented reason. It can only create a draft-only PO and notify an optional buyer-decision webhook.</p>
+            </>
           ) : <DecisionOutcome detail={detail} currency={currency} />}
         </>
       )}
@@ -194,7 +198,29 @@ function CounterOfferPanel({
         <strong>{target}</strong>
       </div>
       <button className="button button-secondary full-button" type="button" onClick={onPrepareCounterOffer} disabled={isWorking || detail?.run.state !== "negotiation_or_ready" || !selectedScore}>Prepare counter-offer draft</button>
-      {counterOffer && <article className="draft-preview"><span className="draft-label">Draft subject</span><b>{counterOffer.subject}</b><p>{counterOffer.body}</p><small>Disclosure check: {counterOffer.disclosure_check}</small></article>}
+      {counterOffer && <NegotiationThread draft={counterOffer} />}
+    </section>
+  );
+}
+
+function NegotiationThread({ draft }: { draft: CounterOfferDraft }) {
+  return (
+    <section className="negotiation-thread" aria-labelledby="negotiation-thread-title">
+      <div className="thread-heading">
+        <span className="draft-label" id="negotiation-thread-title">Simulated negotiation thread</span>
+        <span>{draft.thread.length} messages</span>
+      </div>
+      <p className="thread-boundary">Draft simulation only. No message was delivered to a supplier.</p>
+      <ol>
+        {draft.thread.map((message, index) => (
+          <li className={`thread-message thread-message-${message.speaker}`} key={`${message.round_number}-${message.speaker}-${index}`}>
+            <span>{message.speaker === "buyer" ? "Buyer draft" : "Supplier simulation"} · round {message.round_number}</span>
+            <b>{message.subject}</b>
+            <p>{message.body}</p>
+          </li>
+        ))}
+      </ol>
+      <small>Disclosure check: {draft.disclosure_check}</small>
     </section>
   );
 }

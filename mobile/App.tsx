@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  PanResponder,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -36,9 +37,10 @@ const formatMoney = (value: string, currency: string) =>
 
 export default function App() {
   const [runId, setRunId] = useState("");
-  const [buyerId, setBuyerId] = useState("demo-buyer");
+  const [prototypeBuyerId, setPrototypeBuyerId] = useState("");
   const [detail, setDetail] = useState<RfqRunDetail | null>(null);
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Load an RFQ run to review an eligible bid.");
 
@@ -82,23 +84,63 @@ export default function App() {
     }
   }
 
-  async function decide(decision: "approve" | "reject") {
+  async function decide(decision: "approve" | "override" | "reject") {
     if (!detail) return;
-    if (decision === "approve" && !selectedQuoteId) {
-      Alert.alert("Eligible quote required", "Select an in-budget quote before approving a draft.");
+    if (decision !== "reject" && !selectedQuoteId) {
+      Alert.alert("Eligible quote required", "Select an in-budget quote before creating a draft.");
+      return;
+    }
+    if (decision === "override" && !note.trim()) {
+      Alert.alert("Override reason required", "Document why the eligible supplier selection needs an override.");
       return;
     }
     setBusy(true);
     try {
-      await submitDecision(detail.run.run_id, buyerId.trim(), decision, selectedQuoteId);
+      await submitDecision(
+        detail.run.run_id,
+        prototypeBuyerId.trim() || undefined,
+        decision,
+        selectedQuoteId,
+        note.trim() || undefined,
+      );
       await loadRun();
-      setMessage(decision === "approve" ? "Non-binding PO draft prepared." : "RFQ outcome rejected.");
+      setNote("");
+      setMessage(
+        decision === "approve"
+          ? "Non-binding PO draft prepared. Any configured buyer-decision webhook receives an audit notification only."
+          : decision === "override"
+          ? "Documented override recorded for an eligible non-binding PO draft."
+          : "RFQ outcome rejected.",
+      );
     } catch (error) {
+      // A webhook error can happen after the local draft-only decision is durable.
+      // Refresh once so this card does not invite a duplicate buyer action.
+      try {
+        const refreshed = await getRun(detail.run.run_id);
+        setDetail(refreshed);
+      } catch {
+        // Preserve the original decision error when recovery is unavailable.
+      }
       setMessage(error instanceof Error ? error.message : "The buyer decision could not be saved.");
     } finally {
       setBusy(false);
     }
   }
+
+  const approvePanResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) => (
+        detail?.run.state === "awaiting_approval"
+        && !busy
+        && Boolean(selectedQuoteId)
+        && gesture.dx > 14
+      ),
+      onPanResponderRelease: (_event, gesture) => {
+        if (gesture.dx >= 88) void decide("approve");
+      },
+    }),
+    [busy, detail?.run.state, selectedQuoteId],
+  );
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -147,10 +189,16 @@ export default function App() {
             {detail.run.state === "awaiting_approval" && (
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Buyer decision</Text>
-                <Text style={styles.label}>Prototype buyer ID</Text>
-                <TextInput value={buyerId} onChangeText={setBuyerId} autoCapitalize="none" style={styles.input} />
-                <Pressable onPress={() => void decide("approve")} disabled={busy || !selectedQuoteId} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, busy && styles.disabled]}>
-                  <Text style={styles.primaryButtonText}>Approve PO draft</Text>
+                <Text style={styles.sectionCopy}>A signed session records its server-derived actor. For the local prototype, enter an allowlisted buyer ID. A configured webhook receives only a signed draft-only audit notification.</Text>
+                <Text style={styles.label}>Local prototype buyer ID</Text>
+                <TextInput value={prototypeBuyerId} onChangeText={setPrototypeBuyerId} autoCapitalize="none" placeholder="Configured buyer ID" placeholderTextColor={colors.muted} style={styles.input} />
+                <Text style={styles.label}>Decision note or override reason</Text>
+                <TextInput value={note} onChangeText={setNote} multiline placeholder="Required for an override" placeholderTextColor={colors.muted} style={[styles.input, styles.noteInput]} />
+                <Pressable {...approvePanResponder.panHandlers} onPress={() => void decide("approve")} disabled={busy || !selectedQuoteId} accessibilityHint="Swipe right on this control or double tap to approve a non-binding draft." style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, busy && styles.disabled]}>
+                  <Text style={styles.primaryButtonText}>Swipe right or tap to approve draft</Text>
+                </Pressable>
+                <Pressable onPress={() => void decide("override")} disabled={busy || !selectedQuoteId || !note.trim()} style={({ pressed }) => [styles.overrideButton, pressed && styles.pressed, busy && styles.disabled]}>
+                  <Text style={styles.overrideButtonText}>Documented eligible-bid override</Text>
                 </Pressable>
                 <Pressable onPress={() => void decide("reject")} disabled={busy} style={({ pressed }) => [styles.rejectButton, pressed && styles.pressed, busy && styles.disabled]}>
                   <Text style={styles.rejectButtonText}>Reject RFQ outcome</Text>
@@ -187,6 +235,7 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: 14, padding: 18, backgroundColor: colors.surface, gap: 12 },
   label: { color: "#d9cfc2", fontSize: 13, fontWeight: "700", marginTop: 4 },
   input: { borderWidth: 1, borderColor: "#51483e", borderRadius: 9, color: colors.ink, paddingHorizontal: 13, paddingVertical: 12, backgroundColor: "#120f0c", fontSize: 15 },
+  noteInput: { minHeight: 78, textAlignVertical: "top" },
   primaryButton: { minHeight: 48, borderRadius: 10, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, marginTop: 4 },
   primaryButtonText: { color: colors.accentInk, fontWeight: "800", fontSize: 15 },
   pressed: { transform: [{ translateY: 1 }], opacity: 0.86 },
@@ -204,6 +253,8 @@ const styles = StyleSheet.create({
   quoteCost: { alignItems: "flex-end", gap: 4 },
   quoteMoney: { color: colors.ink, fontWeight: "700", fontSize: 13 },
   eligible: { color: colors.good, fontSize: 10, letterSpacing: 0.6, fontWeight: "800" },
+  overrideButton: { minHeight: 48, borderWidth: 1, borderColor: "#827451", borderRadius: 10, alignItems: "center", justifyContent: "center", marginTop: 10 },
+  overrideButtonText: { color: "#f1ddb1", fontWeight: "800", fontSize: 15 },
   rejectButton: { minHeight: 48, borderWidth: 1, borderColor: "#7b4a43", borderRadius: 10, alignItems: "center", justifyContent: "center", marginTop: 10 },
   rejectButtonText: { color: colors.danger, fontWeight: "800", fontSize: 15 },
   approvedCard: { borderColor: "#49694c", backgroundColor: colors.goodSurface },

@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Iterator
 from time import perf_counter
 from typing import Never
 
@@ -22,8 +21,10 @@ from app.api.models import (
     RfqRunSubmission,
     RfqSourceRunSubmission,
 )
+from app.api.sse import iter_rfq_events
 from app.approval.models import ApprovalRequest, ApprovalResult, BuyerApproval
 from app.approval.service import ApprovalError, ApprovalService, BuyerApprovalPolicy
+from app.approval.webhook import ApprovalWebhookError
 from app.auth.models import AuthenticatedPrincipal, AuthMode, Permission
 from app.auth.service import (
     AuthenticationError,
@@ -31,7 +32,7 @@ from app.auth.service import (
     RequestAuthenticator,
     authenticator_from_environment,
 )
-from app.domain.models import NormalizedQuote
+from app.domain.models import NormalizedQuote, QuoteComparison
 from app.ingestion.extractors import (
     DocumentExtractionError,
     ExtractionProvider,
@@ -55,7 +56,7 @@ from app.persistence.repository import (
     IdempotencyConflictError,
     QuoteHawkRepository,
 )
-from app.policies.pricing import PolicyViolation
+from app.policies.pricing import PolicyViolation, PricingPolicy
 from app.workflow.engine import RfqWorkflow
 from app.workflow.models import RfqWorkflowResult
 
@@ -105,8 +106,11 @@ def configure_quotehawk_api(
     _configure_safe_api_observability(app)
     configured_memory = memory or repository_from_environment()
     configured_buyer_policy = buyer_policy or BuyerApprovalPolicy.from_environment()
+    configured_pricing_policy = PricingPolicy.from_environment()
     app.state.quotehawk_memory = configured_memory
-    app.state.quotehawk_workflow = RfqWorkflow(configured_memory)
+    app.state.quotehawk_workflow = RfqWorkflow(
+        configured_memory, pricing_policy=configured_pricing_policy
+    )
     app.state.quotehawk_approvals = ApprovalService(
         configured_memory,
         policy=configured_buyer_policy,
@@ -114,7 +118,10 @@ def configure_quotehawk_api(
     app.state.quotehawk_authenticator = authenticator or authenticator_from_environment(
         configured_buyer_policy.authorized_buyer_ids
     )
-    app.state.quotehawk_negotiation = NegotiationService(configured_memory)
+    app.state.quotehawk_negotiation = NegotiationService(
+        configured_memory,
+        max_target_reduction_rate=configured_pricing_policy.negotiation_threshold_rate,
+    )
 
 
 def _configure_safe_api_observability(app: FastAPI) -> None:
@@ -266,6 +273,11 @@ def _raise_http_error(error: Exception) -> Never:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="supplier quote did not satisfy the normalized quote contract",
         ) from error
+    if isinstance(error, ApprovalWebhookError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Buyer decision was recorded as draft-only, but its webhook notification failed.",
+        ) from error
     if isinstance(error, (ApprovalError, NegotiationGuardrailError, PolicyViolation, ValueError)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     raise error
@@ -307,6 +319,7 @@ def create_rfq_run(
         result = workflow.run(
             submission.requisition,
             submission.quotes,
+            fx_rates=submission.fx_rates,
             observed_on=submission.observed_on,
             run_id=submission.run_id,
             tenant_id=principal.tenant_id,
@@ -336,7 +349,7 @@ def create_rfq_source_run(
     request: Request,
     response: Response,
 ) -> RfqWorkflowResult:
-    """Normalize three-to-five source documents, then start the durable RFQ flow.
+    """Normalize three-to-fifty source documents, then start the durable RFQ flow.
 
     This endpoint accepts CSV quotations, unstructured supplier email text, and
     base64 PDF invoices/quotations. Source artifacts are processed in memory and
@@ -355,6 +368,7 @@ def create_rfq_source_run(
         result = workflow.run(
             submission.requisition,
             quotes,
+            fx_rates=submission.fx_rates,
             observed_on=submission.observed_on,
             run_id=submission.run_id,
             tenant_id=principal.tenant_id,
@@ -431,16 +445,38 @@ def stream_rfq_events(run_id: str, request: Request) -> StreamingResponse:
         events = memory.audit_events_for(run_id, tenant_id=principal.tenant_id)
         if not events and memory.load_rfq_run(run_id, tenant_id=principal.tenant_id):
             raise KeyError(f"no audit events for RFQ run {run_id}")
+        payload = memory.payload_for(run_id, tenant_id=principal.tenant_id)
+        comparison_payload = payload.get("comparison")
+        comparison = (
+            QuoteComparison.model_validate(comparison_payload)
+            if isinstance(comparison_payload, dict)
+            else None
+        )
+        stored_drafts = payload.get("counter_offer_drafts", {})
+        if not isinstance(stored_drafts, dict):
+            raise ValueError("RFQ run contains invalid counter-offer draft storage")
+        counter_offer_drafts = tuple(
+            CounterOfferDraft.model_validate(item) for item in stored_drafts.values()
+        )
     except Exception as error:
         _raise_http_error(error)
     record_event("rfq_audit_stream_opened", run_id=run_id)
 
-    def event_stream() -> Iterator[str]:
-        for event in events:
-            yield f"event: rfq.audit\ndata: {event.model_dump_json()}\n\n"
-        yield f"event: rfq.complete\ndata: {json.dumps({'run_id': run_id})}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    last_event_id = request.headers.get("Last-Event-ID", "0")
+    try:
+        after_sequence = max(0, int(last_event_id))
+    except ValueError:
+        after_sequence = 0
+    return StreamingResponse(
+        iter_rfq_events(
+            events,
+            comparison=comparison,
+            counter_offer_drafts=counter_offer_drafts,
+            after_sequence=after_sequence,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/runs/{run_id}/approval-requests", response_model=ApprovalRequest)
