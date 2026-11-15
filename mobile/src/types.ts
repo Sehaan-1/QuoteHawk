@@ -1,17 +1,66 @@
 export type RfqState =
+  | "intake"
+  | "normalized"
+  | "enriched_with_memory"
+  | "analyzed"
   | "negotiation_or_ready"
   | "awaiting_approval"
   | "approved_draft"
-  | "rejected"
-  | string;
+  | "rejected";
+
+export type BuyerDecision = "approve" | "override" | "reject";
+
+export type LandedCost = {
+  currency: string;
+  source_currency: string;
+  fx_rate: string;
+  line_total: string;
+  freight_cost: string;
+  shipping_cost: string;
+  duties_cost: string;
+  lead_time_penalty: string;
+  minimum_order_penalty: string;
+  payment_term_penalty: string;
+  quality_penalty: string;
+  early_payment_discount: string;
+  total_landed_cost: string;
+};
 
 export type QuoteScore = {
   quote_id: string;
   vendor_id: string;
-  landed_cost: { total_landed_cost: string };
+  landed_cost: LandedCost;
   weighted_score: string;
+  price_score: string;
+  lead_time_score: string;
+  payment_term_score: string;
+  supplier_performance_score: string;
   approval_ready: boolean;
   guardrail_messages: string[];
+};
+
+export type Quote = {
+  quote_id: string;
+  vendor_id: string;
+  vendor_name: string;
+  lead_time_days: number;
+  currency: string;
+};
+
+export type AuditEvent = {
+  sequence: number;
+  occurred_at: string;
+  event_type: string;
+  reason: string;
+};
+
+export type PurchaseOrderDraft = {
+  draft_id?: string;
+  source_quote_id?: string;
+  vendor_name: string;
+  total_landed_cost: string;
+  disclaimer: string;
+  status: "draft_only";
 };
 
 export type RfqRunDetail = {
@@ -19,15 +68,19 @@ export type RfqRunDetail = {
     run_id: string;
     requisition_id: string;
     state: RfqState;
+    updated_at?: string;
   };
+  audit_events: AuditEvent[];
   payload: {
-    requisition: { currency: string; max_landed_cost: string };
-    quotes: Array<{ quote_id: string; vendor_name: string; lead_time_days: number }>;
-    comparison: { ranked_quotes: QuoteScore[] };
+    requisition: {
+      currency: string;
+      max_landed_cost: string;
+      items?: Array<{ sku: string; quantity: string }>;
+    };
+    quotes: Quote[];
+    comparison: { currency: string; ranked_quotes: QuoteScore[] };
   };
-  purchase_order_draft: {
-    vendor_name: string;
-    total_landed_cost: string;
-    disclaimer: string;
-  } | null;
+  purchase_order_draft: PurchaseOrderDraft | null;
 };
+
+export type RfqView = "review" | "activity";
