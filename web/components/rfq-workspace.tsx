@@ -432,7 +432,7 @@ function CostBreakdown({ score, currency }: { score: QuoteScore; currency: strin
     <aside className="cost-breakdown" aria-label="Best landed-cost breakdown">
       <div><span>Selected view</span><strong>{score.quote_id}</strong></div>
       <div><span>Lines</span><strong>{money(cost.line_total, currency)}</strong></div>
-      <div><span>Freight + duties</span><strong>{money(Number(cost.freight_cost) + Number(cost.duties_cost), currency)}</strong></div>
+      <div><span>Freight + shipping + duties</span><strong>{money(Number(cost.freight_cost) + Number(cost.shipping_cost) + Number(cost.duties_cost), currency)}</strong></div>
       <div><span>Policy adjustments</span><strong>{money(Number(cost.lead_time_penalty) + Number(cost.minimum_order_penalty) + Number(cost.payment_term_penalty) + Number(cost.quality_penalty) - Number(cost.early_payment_discount), currency)}</strong></div>
       <div className="cost-total"><span>Total landed cost</span><strong>{money(cost.total_landed_cost, currency)}</strong></div>
     </aside>

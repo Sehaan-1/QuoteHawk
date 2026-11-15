@@ -49,6 +49,7 @@ class AdversarialSupplierSimulator:
             "currency": self.requisition.currency,
             "lines": lines,
             "freight_cost": "100.00",
+            "shipping_cost": "0.00",
             "duties_cost": "0.00",
             "lead_time_days": self.requisition.target_lead_time_days,
             "payment_terms": "net_30",

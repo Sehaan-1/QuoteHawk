@@ -33,8 +33,11 @@ identity or terms, or bypass buyer approval.
 - `app/negotiation/` passes only recipient data plus an anonymized target to a
   provider, blocks competitor identities and exact commercial terms (including
   straightforward presentation obfuscation) in output, and has no sending tool.
-- `app/ingestion/` validates fixture or Gemini output against `NormalizedQuote`
-  before it can reach policy code.
+- `app/ingestion/` accepts bounded CSV/plain-email/PDF source artifacts only at
+  the request boundary and validates rule-based or Gemini output against
+  `NormalizedQuote` before it can reach policy code. Raw artifacts are ephemeral:
+  never persist or log them; retain only normalized facts and a one-way request
+  fingerprint. Read `docs/supplier-source-ingestion.md` before changing formats.
 - `app/api/` exposes concise audit facts over REST/SSE; never stream chain of
   thought or raw provider reasoning. It emits only safe correlated operational
   facts through `app/observability.py`; never add bodies, commercial values,
@@ -73,7 +76,7 @@ prototype template. Use its lifecycle deliberately:
 Useful commands:
 
 ```bash
-uv sync --all-groups
+uv sync --all-groups --all-extras
 uv run pytest
 uv run ruff check .
 agents-cli info
