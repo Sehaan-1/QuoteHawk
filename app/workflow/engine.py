@@ -15,6 +15,7 @@ from app.domain.models import (
     PurchaseRequisition,
     QuoteComparison,
     SupplierBaseline,
+    assert_unique_quote_identities,
 )
 from app.persistence.repository import (
     ConcurrentRunUpdateError,
@@ -63,6 +64,7 @@ class RfqWorkflow:
         if (idempotency_key is None) != (request_fingerprint is None):
             raise ValueError("idempotency key and request fingerprint must be supplied together")
         received_quotes = tuple(quotes)
+        assert_unique_quote_identities(received_quotes)
         run_id = run_id or f"rfq-{uuid4()}"
         observed_on = observed_on or date.today()
         creation = self.memory.create_or_retrieve_rfq_run(
@@ -239,9 +241,11 @@ class RfqWorkflow:
         self, run_id: str, tenant_id: str
     ) -> tuple[PurchaseRequisition, tuple[NormalizedQuote, ...], date]:
         payload = self.memory.payload_for(run_id, tenant_id=tenant_id)
+        quotes = tuple(NormalizedQuote.model_validate(item) for item in payload["quotes"])
+        assert_unique_quote_identities(quotes)
         return (
             PurchaseRequisition.model_validate(payload["requisition"]),
-            tuple(NormalizedQuote.model_validate(item) for item in payload["quotes"]),
+            quotes,
             date.fromisoformat(payload["observed_on"]),
         )
 

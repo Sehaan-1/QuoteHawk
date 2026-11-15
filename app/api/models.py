@@ -5,10 +5,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.approval.models import ApprovalRecord, PurchaseOrderDraft
-from app.domain.models import NormalizedQuote, PurchaseRequisition
+from app.domain.models import (
+    NormalizedQuote,
+    PurchaseRequisition,
+    assert_unique_quote_identities,
+)
 from app.ingestion.extractors import ExtractionProvider
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqWorkflowResult
 
@@ -22,6 +26,11 @@ class RfqRunSubmission(BaseModel):
     quotes: tuple[NormalizedQuote, ...] = Field(min_length=1, max_length=5)
     observed_on: date | None = None
     run_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_quote_identities(self) -> RfqRunSubmission:
+        assert_unique_quote_identities(self.quotes)
+        return self
 
 
 class RfqRunDetail(BaseModel):

@@ -81,6 +81,37 @@ def test_workflow_supports_a_five_bid_comparison(requisition, tmp_path) -> None:
     assert result.comparison.ranked_quotes[0].quote_id == "FIVE-0"
 
 
+def test_workflow_rejects_ambiguous_supplier_or_quote_identity_before_persistence(
+    requisition, tmp_path
+) -> None:
+    memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
+    workflow = RfqWorkflow(memory)
+
+    with pytest.raises(ValueError, match="quote IDs must be unique"):
+        workflow.run(
+            requisition,
+            [
+                make_quote(quote_id="DUPLICATE", vendor_id="vendor-alpha"),
+                make_quote(quote_id="DUPLICATE", vendor_id="vendor-bravo"),
+            ],
+            run_id="duplicate-quote-id",
+        )
+    with pytest.raises(ValueError, match="vendor IDs must be unique"):
+        workflow.run(
+            requisition,
+            [
+                make_quote(quote_id="ALPHA-ONE", vendor_id="vendor-alpha"),
+                make_quote(quote_id="ALPHA-TWO", vendor_id="VENDOR-ALPHA"),
+            ],
+            run_id="duplicate-vendor-id",
+        )
+
+    with pytest.raises(KeyError):
+        memory.load_rfq_run("duplicate-quote-id")
+    with pytest.raises(KeyError):
+        memory.load_rfq_run("duplicate-vendor-id")
+
+
 def test_illegal_transition_is_rejected_and_never_silently_skips_analysis(
     requisition, tmp_path
 ) -> None:

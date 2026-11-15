@@ -214,7 +214,7 @@ are explicitly approved.
 | Currency | This prototype rejects currency mismatches; it does not guess FX rates. |
 | Fees | Freight and duties must be present explicitly, even when zero. |
 | Precision | All money uses `Decimal`; SQLite stores canonical decimal text and Postgres stores `NUMERIC`. |
-| Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor name is blocked. |
+| Confidentiality | Counter-offers receive only recipient context plus an anonymous target; provider output containing a competitor identity or exact commercial term is blocked after presentation-normalized checks. |
 | Approval | In OIDC mode, only a verified token subject with the configured approver role and matching tenant can decide an awaiting request; only an eligible quote can yield a draft. The allowlist is local-prototype fallback only. |
 | Execution | No SMTP, ERP, purchase, or PO-issuance tool exists in the agent surface; an approved payload is `draft_only`. |
 | Untrusted text | Fixture/Gemini extraction treats supplier text as data, rejects unknown/malformed schema fields, and never grants document instructions policy authority. |
@@ -240,6 +240,9 @@ are explicitly approved.
    request fingerprints, deterministic resume/recovery, backend readiness checks,
    and SQLite/Postgres optimistic-concurrency regressions. The draft-only boundary
    remains unchanged.
+9. **Adversarial policy hardening** — complete: unique RFQ bid identities,
+   nested-schema injection coverage, presentation-normalized competitor disclosure
+   blocking, broader false-execution claims, and credentialed safety-eval fixtures.
 
 ## Project layout
 
