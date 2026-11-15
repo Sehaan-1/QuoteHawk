@@ -201,7 +201,10 @@ cd ../mobile && cp .env.example .env && npm install && npm run start
 
 The Next development server proxies the dashboard's relative `/api/rfq` calls to
 FastAPI. The Expo app uses `EXPO_PUBLIC_QUOTEHAWK_API_BASE_URL`; a physical phone
-needs the computer's reachable LAN URL rather than `localhost`. See
+needs the computer's reachable LAN URL rather than `localhost`. Its focused buyer
+review includes deterministic landed-cost/FX facts, every bid's guardrail state,
+a persisted audit timeline, native decision confirmations, and only five locally
+remembered opaque run IDs—never a token, quote body, or buyer identity. See
 [`web/README.md`](web/README.md) and [`mobile/README.md`](mobile/README.md) for
 static-export and device notes.
 
