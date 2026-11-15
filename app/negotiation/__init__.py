@@ -1,6 +1,12 @@
 """Guarded, draft-only supplier counter-offer generation."""
 
-from .models import CounterOfferDraft, DraftProvider, NegotiationRequest
+from .models import (
+    CounterOfferDraft,
+    DraftProvider,
+    NegotiationRequest,
+    NegotiationSpeaker,
+    NegotiationThreadMessage,
+)
 from .service import NegotiationGuardrailError, NegotiationService
 
 __all__ = [
@@ -9,4 +15,6 @@ __all__ = [
     "NegotiationGuardrailError",
     "NegotiationRequest",
     "NegotiationService",
+    "NegotiationSpeaker",
+    "NegotiationThreadMessage",
 ]

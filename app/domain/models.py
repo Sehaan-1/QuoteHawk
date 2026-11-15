@@ -10,7 +10,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Iterable, Mapping
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -31,16 +31,69 @@ class QuoteSource(StrEnum):
 
 
 class PaymentTerms(StrEnum):
-    """Supported payment terms for the first local prototype."""
+    """Commercial payment structures accepted by deterministic policy."""
 
+    NET_0 = "net_0"
     NET_10 = "net_10"
+    NET_15 = "net_15"
     NET_30 = "net_30"
     NET_45 = "net_45"
     NET_60 = "net_60"
+    NET_90 = "net_90"
+    NET_120 = "net_120"
+    PREPAYMENT = "prepayment"
+    MILESTONE = "milestone"
+    LETTER_OF_CREDIT = "letter_of_credit"
 
     @property
     def days(self) -> int:
-        return int(self.value.removeprefix("net_"))
+        """Return the fixed timing for net/prepayment terms only."""
+
+        if self.value.startswith("net_"):
+            return int(self.value.removeprefix("net_"))
+        if self is PaymentTerms.PREPAYMENT:
+            return 0
+        raise ValueError("structured payment terms require NormalizedQuote.effective_payment_days")
+
+    @property
+    def has_fixed_days(self) -> bool:
+        return self.value.startswith("net_") or self is PaymentTerms.PREPAYMENT
+
+
+class PaymentMilestone(BaseModel):
+    """One declared portion of a milestone-billed supplier quotation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    percentage: Decimal = Field(gt=0, le=1, max_digits=5, decimal_places=4)
+    due_days: int = Field(ge=0, le=730)
+    description: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class FxRate(BaseModel):
+    """An explicit auditable rate from a quote currency into the PR currency."""
+
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
+
+    source_currency: str = Field(min_length=3, max_length=3)
+    target_currency: str = Field(min_length=3, max_length=3)
+    rate: Decimal = Field(gt=0, max_digits=14, decimal_places=8)
+    as_of: date | None = None
+    source: str = Field(default="buyer_supplied", min_length=1, max_length=80)
+
+    @field_validator("source_currency", "target_currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        normalized = value.upper()
+        if not normalized.isalpha():
+            raise ValueError("currency must be a three-letter ISO-style code")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_distinct_currencies(self) -> FxRate:
+        if self.source_currency == self.target_currency:
+            raise ValueError("FX rates must convert between distinct currencies")
+        return self
 
 
 class RequisitionLine(BaseModel):
@@ -83,7 +136,7 @@ class PurchaseRequisition(BaseModel):
 
 
 class QuoteLine(BaseModel):
-    """A supplier's priced line, normalized into the requisition currency."""
+    """A supplier-priced line expressed in its quote currency."""
 
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra="forbid")
 
@@ -113,6 +166,8 @@ class NormalizedQuote(BaseModel):
     duties_cost: Money = Field(ge=0, max_digits=14, decimal_places=2)
     lead_time_days: int = Field(ge=0, le=730)
     payment_terms: PaymentTerms
+    payment_term_days: int | None = Field(default=None, ge=0, le=730)
+    payment_milestones: tuple[PaymentMilestone, ...] = Field(default=(), max_length=12)
     minimum_order_quantity: Decimal = Field(default=Decimal("0"), ge=0)
     quality_penalty: Money = Field(default=Decimal("0"), ge=0, max_digits=14)
     early_payment_discount_rate: Decimal = Field(
@@ -129,11 +184,47 @@ class NormalizedQuote(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def require_unique_line_skus(self) -> NormalizedQuote:
+    def require_valid_commercial_structure(self) -> NormalizedQuote:
         skus = [line.sku for line in self.lines]
         if len(skus) != len(set(skus)):
             raise ValueError("quote line SKUs must be unique")
+        if self.payment_terms.has_fixed_days:
+            if self.payment_term_days is not None or self.payment_milestones:
+                raise ValueError("fixed payment terms cannot include structured payment timing")
+        elif self.payment_terms is PaymentTerms.LETTER_OF_CREDIT:
+            if self.payment_term_days is None:
+                raise ValueError("letter_of_credit payment terms require payment_term_days")
+            if self.payment_milestones:
+                raise ValueError("letter_of_credit payment terms cannot include milestones")
+        elif self.payment_terms is PaymentTerms.MILESTONE:
+            if not self.payment_milestones:
+                raise ValueError("milestone payment terms require payment_milestones")
+            if self.payment_term_days is not None:
+                raise ValueError("milestone payment terms derive timing from payment_milestones")
+            if sum(
+                (milestone.percentage for milestone in self.payment_milestones), Decimal("0")
+            ) != Decimal("1"):
+                raise ValueError("payment milestone percentages must sum to 1.00")
         return self
+
+    @property
+    def effective_payment_days(self) -> int:
+        """Return deterministic financing timing for fixed, LC, or milestone terms."""
+
+        if self.payment_terms.has_fixed_days:
+            return self.payment_terms.days
+        if self.payment_terms is PaymentTerms.LETTER_OF_CREDIT:
+            if self.payment_term_days is None:  # guarded by model validation
+                raise ValueError("letter_of_credit payment terms require payment_term_days")
+            return self.payment_term_days
+        weighted_days = sum(
+            (
+                milestone.percentage * Decimal(milestone.due_days)
+                for milestone in self.payment_milestones
+            ),
+            Decimal("0"),
+        )
+        return int(weighted_days.to_integral_value(rounding=ROUND_HALF_UP))
 
 
 def persisted_quote_from_payload(payload: Mapping[str, object]) -> NormalizedQuote:
@@ -172,12 +263,22 @@ def assert_unique_quote_identities(quotes: Iterable[NormalizedQuote]) -> None:
 
 
 class LandedCostBreakdown(BaseModel):
-    """Every component used to calculate total landed cost."""
+    """Every component used to calculate total landed cost in the PR currency."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     currency: str
+    source_currency: str
+    fx_rate: Decimal = Field(default=Decimal("1"), gt=0)
     line_total: Money = Field(ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_legacy_same_currency_snapshots(cls, value: object) -> object:
+        if isinstance(value, Mapping) and "source_currency" not in value:
+            return {**value, "source_currency": value.get("currency", "USD")}
+        return value
+
     freight_cost: Money = Field(ge=0)
     shipping_cost: Money = Field(ge=0)
     duties_cost: Money = Field(ge=0)
@@ -213,7 +314,7 @@ class QuoteComparison(BaseModel):
 
     requisition_id: str
     currency: str
-    ranked_quotes: tuple[QuoteScore, ...] = Field(min_length=1, max_length=5)
+    ranked_quotes: tuple[QuoteScore, ...] = Field(min_length=1, max_length=50)
 
 
 class SupplierObservation(BaseModel):

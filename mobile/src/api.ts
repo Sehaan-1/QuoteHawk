@@ -22,15 +22,17 @@ export const openApproval = (runId: string) =>
 
 export const submitDecision = (
   runId: string,
-  buyerId: string,
-  decision: "approve" | "reject",
+  prototypeBuyerId: string | undefined,
+  decision: "approve" | "override" | "reject",
   selectedQuoteId?: string,
+  note?: string,
 ) =>
   request(`/runs/${encodeURIComponent(runId)}/approvals`, {
     method: "POST",
     body: JSON.stringify({
-      buyer_id: buyerId,
+      buyer_id: prototypeBuyerId,
       decision,
-      selected_quote_id: decision === "approve" ? selectedQuoteId : undefined,
+      selected_quote_id: decision === "reject" ? undefined : selectedQuoteId,
+      note: note || undefined,
     }),
   });

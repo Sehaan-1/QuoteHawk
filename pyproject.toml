@@ -16,6 +16,7 @@ dependencies = [
     "opentelemetry-resourcedetector-gcp<=1.12.0a0",
     "pydantic>=2.10,<3.0",
     "psycopg[binary]>=3.2,<4.0",
+    "redis>=5.2,<7.0",
     "pypdf>=5.0,<7.0",
     "PyJWT[crypto]>=2.10,<3.0",
     "python-dotenv>=1.0,<2.0",

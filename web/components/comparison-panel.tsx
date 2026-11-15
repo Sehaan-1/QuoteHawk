@@ -1,8 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import type { QuoteScore, RfqRunDetail } from "@/lib/types";
 import { formatMoney, stateLabel, sumCosts } from "@/lib/format";
 import { PanelSkeleton } from "@/components/workspace-skeleton";
+
+const BIDS_PER_PAGE = 5;
 
 type ComparisonPanelProps = {
   detail: RfqRunDetail | null;
@@ -22,6 +26,15 @@ export function ComparisonPanel({
   const scores = comparison?.ranked_quotes ?? [];
   const currency = comparison?.currency ?? "USD";
   const selectedScore = scores.find((score) => score.quote_id === selectedQuoteId);
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(scores.length / BIDS_PER_PAGE));
+  const visiblePage = Math.min(page, pageCount);
+  const startIndex = (visiblePage - 1) * BIDS_PER_PAGE;
+  const pageScores = scores.slice(startIndex, startIndex + BIDS_PER_PAGE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [scores.length]);
 
   return (
     <section className="workspace-section" id="comparison" aria-labelledby="comparison-title">
@@ -48,7 +61,7 @@ export function ComparisonPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {scores.map((score) => {
+                  {pageScores.map((score) => {
                     const quote = quotes.find((candidate) => candidate.quote_id === score.quote_id);
                     const selected = selectedQuoteId === score.quote_id;
                     const policyMessageId = `quote-policy-${score.quote_id}`;
@@ -85,6 +98,13 @@ export function ComparisonPanel({
                 </tbody>
               </table>
             </div>
+            {scores.length > BIDS_PER_PAGE && (
+              <nav className="comparison-pagination" aria-label="Supplier comparison pages">
+                <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={visiblePage === 1}>Previous five bids</button>
+                <span aria-live="polite">Bids {startIndex + 1}–{Math.min(startIndex + BIDS_PER_PAGE, scores.length)} of {scores.length}</span>
+                <button type="button" onClick={() => setPage((current) => Math.min(pageCount, current + 1))} disabled={visiblePage === pageCount}>Next five bids</button>
+              </nav>
+            )}
             <p className="selection-summary" aria-live="polite">
               {selectedScore
                 ? `${selectedScore.quote_id} selected for review. ${selectedScore.approval_ready ? "It is eligible for buyer approval." : "It remains blocked by policy."}`
@@ -113,7 +133,7 @@ function EmptyComparison() {
   return (
     <div className="empty-comparison">
       <div className="empty-grid" aria-hidden="true"><span /><span /><span /><span /><span /></div>
-      <div><b>No RFQ loaded</b><p>Start with a persisted run or create the local five-bid fixture.</p></div>
+      <div><b>No RFQ loaded</b><p>Start with a persisted run or create the local five-bid review fixture.</p></div>
     </div>
   );
 }
@@ -131,7 +151,7 @@ function CostBreakdown({ score, currency }: { score: QuoteScore; currency: strin
 
   return (
     <aside className="cost-breakdown" aria-label={`Landed-cost breakdown for ${score.quote_id}`}>
-      <div><span>Selected view</span><strong>{score.quote_id}</strong></div>
+      <div><span>Selected view</span><strong>{score.quote_id}</strong><small>{cost.source_currency === currency ? "Quoted in PR currency" : `${cost.source_currency} × ${cost.fx_rate} FX`}</small></div>
       <div><span>Lines</span><strong>{formatMoney(cost.line_total, currency)}</strong></div>
       <div><span>Freight + shipping + duties</span><strong>{formatMoney(transportCosts, currency)}</strong></div>
       <div><span>Policy adjustments</span><strong>{formatMoney(policyAdjustments, currency)}</strong></div>

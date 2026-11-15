@@ -107,7 +107,18 @@ def test_fixture_counter_offer_is_draft_only_and_hides_competitor(requisition, t
     assert draft.status == "draft_only"
     assert draft.provider is DraftProvider.FIXTURE
     assert "Secret Rival" not in draft.body
+    assert len(draft.thread) == 4
+    assert [message.speaker.value for message in draft.thread] == [
+        "buyer",
+        "supplier",
+        "buyer",
+        "supplier",
+    ]
+    assert all(message.status == "simulated_draft_only" for message in draft.thread)
     assert memory.audit_events_for("negotiation-run")[-1].event_type == "counter_offer_drafted"
+    persisted_drafts = memory.payload_for("negotiation-run")["counter_offer_drafts"]
+    assert persisted_drafts["vendor-alpha"]["status"] == "draft_only"
+    assert len(persisted_drafts["vendor-alpha"]["thread"]) == 4
 
 
 def test_competitor_name_from_a_provider_is_blocked_before_returning_a_draft(

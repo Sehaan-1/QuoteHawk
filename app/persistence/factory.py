@@ -6,6 +6,7 @@ import os
 from enum import StrEnum
 
 from app.persistence.postgres import PostgresSupplierMemory
+from app.persistence.redis_stack import RedisSupplierMemory
 from app.persistence.repository import QuoteHawkRepository
 from app.persistence.sqlite import SqliteSupplierMemory
 
@@ -28,11 +29,25 @@ def repository_from_environment() -> QuoteHawkRepository:
     except ValueError as error:
         raise ValueError("QUOTEHAWK_PERSISTENCE_BACKEND must be 'sqlite' or 'postgres'") from error
     if backend is PersistenceBackend.SQLITE:
-        return SqliteSupplierMemory(os.getenv("QUOTEHAWK_DATABASE_PATH", "quotehawk.db"))
+        repository: QuoteHawkRepository = SqliteSupplierMemory(
+            os.getenv("QUOTEHAWK_DATABASE_PATH", "quotehawk.db")
+        )
+    else:
+        dsn = os.getenv("QUOTEHAWK_POSTGRES_DSN", "").strip()
+        if not dsn:
+            raise ValueError(
+                "QUOTEHAWK_POSTGRES_DSN is required when persistence backend is postgres"
+            )
+        # Postgres migrations are an explicit deployment step. Do not mutate a
+        # production schema opportunistically while accepting an API request.
+        repository = PostgresSupplierMemory(dsn)
 
-    dsn = os.getenv("QUOTEHAWK_POSTGRES_DSN", "").strip()
-    if not dsn:
-        raise ValueError("QUOTEHAWK_POSTGRES_DSN is required when persistence backend is postgres")
-    # Postgres migrations are an explicit deployment step. Do not mutate a
-    # production schema opportunistically while accepting an API request.
-    return PostgresSupplierMemory(dsn)
+    redis_url = os.getenv("QUOTEHAWK_REDIS_URL", "").strip()
+    if not redis_url:
+        return repository
+    return RedisSupplierMemory.from_url(
+        repository,
+        redis_url,
+        cache_ttl_seconds=int(os.getenv("QUOTEHAWK_REDIS_CACHE_TTL_SECONDS", "300")),
+        queue_name=os.getenv("QUOTEHAWK_REDIS_QUEUE_NAME", "quotehawk:rfq-work"),
+    )

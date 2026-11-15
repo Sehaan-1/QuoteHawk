@@ -11,6 +11,7 @@ from app.analysis.models import SupplierQuoteBaseline
 from app.approval.models import ApprovalRecord, PurchaseOrderDraft
 from app.auth.models import DEFAULT_TENANT_ID
 from app.domain.models import NormalizedQuote, SupplierBaseline, SupplierObservation
+from app.negotiation.models import CounterOfferDraft
 from app.workflow.models import RfqAuditEvent, RfqRun, RfqRunState
 
 
@@ -143,6 +144,14 @@ class RfqRunRepository(Protocol):
         details: Mapping[str, Any] | None = None,
     ) -> None:
         """Append a non-transition event for one tenant's RFQ run."""
+
+    def store_counter_offer_draft(
+        self,
+        *,
+        draft: CounterOfferDraft,
+        tenant_id: str = DEFAULT_TENANT_ID,
+    ) -> None:
+        """Durably store a buyer-reviewable, non-delivered negotiation thread."""
 
     def load_rfq_run(self, run_id: str, *, tenant_id: str = DEFAULT_TENANT_ID) -> RfqRun:
         """Load a tenant-owned RFQ run."""
