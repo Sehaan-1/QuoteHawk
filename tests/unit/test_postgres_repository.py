@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from psycopg_pool import ConnectionPool
 
 from app.persistence.factory import repository_from_environment
 from app.persistence.postgres import _MIGRATIONS, PostgresSupplierMemory, _migration_statements
@@ -79,6 +80,31 @@ class _ConnectionFactory:
         return connection
 
 
+class _RecordingPool:
+    """Offline pool double that verifies borrow/return behavior without sockets."""
+
+    def __init__(self, connection: _RecordingConnection) -> None:
+        self._connection = connection
+        self.open_calls: list[bool] = []
+        self.borrow_count = 0
+        self.return_count = 0
+        self.closed = False
+
+    def open(self, *, wait: bool) -> None:
+        self.open_calls.append(wait)
+
+    @contextmanager
+    def connection(self):  # type: ignore[no-untyped-def]
+        self.borrow_count += 1
+        try:
+            yield self._connection
+        finally:
+            self.return_count += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _ReplayIdempotencyConnection(_RecordingConnection):
     """Offline Postgres response for a matching existing idempotency record."""
 
@@ -142,6 +168,78 @@ def test_postgres_constructor_never_connects_or_migrates_implicitly() -> None:
     )
 
     assert repository.dsn == "postgresql://example.invalid/quotehawk"
+    assert factory.connections == []
+
+
+def test_postgres_default_runtime_uses_a_lazy_psycopg_pool() -> None:
+    repository = PostgresSupplierMemory(
+        "postgresql://offline.invalid/quotehawk",
+        pool_min_size=0,
+        pool_max_size=2,
+    )
+
+    assert isinstance(repository._connection_pool, ConnectionPool)
+    assert repository._pool_opened is False
+    repository.close()
+
+
+def test_postgres_pool_is_lazy_bounded_and_reuses_borrowed_connections() -> None:
+    connection = _RecordingConnection()
+    pool = _RecordingPool(connection)
+    repository = PostgresSupplierMemory(
+        "postgresql://offline/quotehawk",
+        connection_pool=pool,
+        pool_min_size=1,
+        pool_max_size=4,
+        pool_timeout_seconds=2,
+    )
+
+    assert pool.open_calls == []
+    assert repository.pool_min_size == 1
+    assert repository.pool_max_size == 4
+    assert repository.pool_timeout_seconds == 2
+
+    repository.load_rfq_run("tenant-run", tenant_id="tenant-acme")
+    repository.load_rfq_run("tenant-run", tenant_id="tenant-beta")
+
+    assert pool.open_calls == [False]
+    assert pool.borrow_count == 2
+    assert pool.return_count == 2
+    assert connection.closed is False
+    tenant_binds = [
+        parameters
+        for statement, parameters in connection.calls
+        if statement == "SELECT set_config('quotehawk.tenant_id', %s, true)"
+    ]
+    assert tenant_binds == [("tenant-acme",), ("tenant-beta",)]
+
+    repository.close()
+    assert pool.closed is True
+
+
+def test_postgres_rejects_invalid_pool_bounds_without_connecting() -> None:
+    factory = _ConnectionFactory()
+
+    with pytest.raises(ValueError, match="minimum"):
+        PostgresSupplierMemory(
+            "postgresql://offline/quotehawk",
+            connection_factory=factory,
+            pool_min_size=-1,
+        )
+    with pytest.raises(ValueError, match="sizes"):
+        PostgresSupplierMemory(
+            "postgresql://offline/quotehawk",
+            connection_factory=factory,
+            pool_min_size=2,
+            pool_max_size=1,
+        )
+    with pytest.raises(ValueError, match="timeout"):
+        PostgresSupplierMemory(
+            "postgresql://offline/quotehawk",
+            connection_factory=factory,
+            pool_timeout_seconds=0,
+        )
+
     assert factory.connections == []
 
 
@@ -260,7 +358,15 @@ def test_persistence_factory_requires_a_dsn_and_preserves_explicit_sqlite_mode(
         repository_from_environment()
 
     monkeypatch.setenv("QUOTEHAWK_POSTGRES_DSN", "postgresql://offline/quotehawk")
-    assert isinstance(repository_from_environment(), PostgresSupplierMemory)
+    monkeypatch.setenv("QUOTEHAWK_POSTGRES_POOL_MIN_SIZE", "2")
+    monkeypatch.setenv("QUOTEHAWK_POSTGRES_POOL_MAX_SIZE", "6")
+    monkeypatch.setenv("QUOTEHAWK_POSTGRES_POOL_TIMEOUT_SECONDS", "3.5")
+    postgres_repository = repository_from_environment()
+    assert isinstance(postgres_repository, PostgresSupplierMemory)
+    assert postgres_repository.pool_min_size == 2
+    assert postgres_repository.pool_max_size == 6
+    assert postgres_repository.pool_timeout_seconds == 3.5
+    postgres_repository.close()
 
     monkeypatch.setenv("QUOTEHAWK_PERSISTENCE_BACKEND", "sqlite")
     monkeypatch.setenv("QUOTEHAWK_DATABASE_PATH", str(tmp_path / "quotehawk.sqlite3"))

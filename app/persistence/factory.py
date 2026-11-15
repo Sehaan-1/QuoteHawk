@@ -40,7 +40,12 @@ def repository_from_environment() -> QuoteHawkRepository:
             )
         # Postgres migrations are an explicit deployment step. Do not mutate a
         # production schema opportunistically while accepting an API request.
-        repository = PostgresSupplierMemory(dsn)
+        repository = PostgresSupplierMemory(
+            dsn,
+            pool_min_size=int(os.getenv("QUOTEHAWK_POSTGRES_POOL_MIN_SIZE", "1")),
+            pool_max_size=int(os.getenv("QUOTEHAWK_POSTGRES_POOL_MAX_SIZE", "10")),
+            pool_timeout_seconds=float(os.getenv("QUOTEHAWK_POSTGRES_POOL_TIMEOUT_SECONDS", "5")),
+        )
 
     redis_url = os.getenv("QUOTEHAWK_REDIS_URL", "").strip()
     if not redis_url:
