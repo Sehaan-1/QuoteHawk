@@ -38,8 +38,8 @@ def public_audit_event(event: RfqAuditEvent) -> dict[str, Any]:
     return {
         "sequence": event.sequence,
         "event_type": event.event_type,
-        "from_state": event.from_state.value if event.from_state else None,
-        "to_state": event.to_state.value if event.to_state else None,
+        "from_state": event.from_state.value if event.from_state is not None else None,
+        "to_state": event.to_state.value if event.to_state is not None else None,
         "reason": event.reason,
         "occurred_at": event.occurred_at.isoformat(),
     }

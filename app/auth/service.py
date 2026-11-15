@@ -67,7 +67,7 @@ class PrototypeAuthenticator:
         *,
         prototype_buyer_id: str | None = None,
     ) -> AuthenticatedPrincipal:
-        if authorization_header:
+        if authorization_header is not None and authorization_header != "":
             raise AuthenticationError("prototype mode does not accept bearer credentials")
         subject = prototype_buyer_id or "prototype-system"
         if prototype_buyer_id is not None and subject not in self.authorized_buyer_ids:

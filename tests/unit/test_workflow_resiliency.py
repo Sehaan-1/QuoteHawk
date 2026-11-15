@@ -2,29 +2,56 @@
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Mapping
+from contextlib import AbstractContextManager
 from datetime import date
+from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 import pytest
+from typing_extensions import override
 
+from app.auth.models import DEFAULT_TENANT_ID
 from app.persistence.repository import ConcurrentRunUpdateError, IdempotencyConflictError
 from app.persistence.sqlite import SqliteSupplierMemory
 from app.workflow.engine import RfqWorkflow
-from app.workflow.models import RfqRunState
+from app.workflow.models import RfqRun, RfqRunState
 from tests.conftest import make_quote
 
 
 class _InterruptedAfterAnalysisMemory(SqliteSupplierMemory):
     """Inject one worker loss at the post-analysis persistence boundary."""
 
-    def __init__(self, database_path) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, database_path: str | Path) -> None:
         super().__init__(database_path)
         self.interrupt = True
 
-    def advance_rfq_run(self, **kwargs):  # type: ignore[no-untyped-def]
-        if self.interrupt and kwargs["to_state"] is RfqRunState.NEGOTIATION_OR_READY:
+    @override
+    def advance_rfq_run(
+        self,
+        *,
+        run_id: str,
+        to_state: RfqRunState,
+        event_type: str,
+        reason: str,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        details: Mapping[str, Any] | None = None,
+        payload_patch: Mapping[str, Any] | None = None,
+    ) -> RfqRun:
+        if self.interrupt and to_state is RfqRunState.NEGOTIATION_OR_READY:
             self.interrupt = False
             raise RuntimeError("simulated worker loss")
-        return super().advance_rfq_run(**kwargs)
+        return super().advance_rfq_run(
+            run_id=run_id,
+            to_state=to_state,
+            event_type=event_type,
+            reason=reason,
+            tenant_id=tenant_id,
+            details=details,
+            payload_patch=payload_patch,
+        )
 
 
 def test_idempotent_run_replays_persisted_result_without_duplicate_events(
@@ -130,7 +157,7 @@ def test_resume_uses_saved_analysis_snapshot_after_interruption(requisition, tmp
 
 
 def test_stale_compare_and_swap_is_reported_as_a_retryable_concurrency_error(
-    requisition, tmp_path
+    requisition, tmp_path, monkeypatch
 ) -> None:
     memory = SqliteSupplierMemory(tmp_path / "quotehawk.sqlite3")
     memory.create_rfq_run(
@@ -144,34 +171,40 @@ def test_stale_compare_and_swap_is_reported_as_a_retryable_concurrency_error(
     # audit event is emitted for the losing transition.
     original_connection = memory._connection
 
+    class _NoUpdateCursor:
+        rowcount: int = 0
+
     class _StaleUpdateConnection:
-        def __init__(self, connection_context):  # type: ignore[no-untyped-def]
+        def __init__(self, connection_context: AbstractContextManager[sqlite3.Connection]) -> None:
             self.connection_context = connection_context
-            self.connection = None
+            self.connection: sqlite3.Connection | None = None
             self.update_seen = False
 
-        def execute(self, statement, parameters=()):  # type: ignore[no-untyped-def]
+        def execute(
+            self, statement: str, parameters: tuple[object, ...] = ()
+        ) -> sqlite3.Cursor | _NoUpdateCursor:
             assert self.connection is not None
             if "UPDATE rfq_runs" in statement and not self.update_seen:
                 self.update_seen = True
-
-                class _NoUpdateCursor:
-                    rowcount = 0
-
                 return _NoUpdateCursor()
             return self.connection.execute(statement, parameters)
 
-        def __enter__(self):  # type: ignore[no-untyped-def]
+        def __enter__(self) -> _StaleUpdateConnection:
             self.connection = self.connection_context.__enter__()
             return self
 
-        def __exit__(self, *args):  # type: ignore[no-untyped-def]
-            return self.connection_context.__exit__(*args)
+        def __exit__(
+            self,
+            exception_type: type[BaseException] | None,
+            exception: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool | None:
+            return self.connection_context.__exit__(exception_type, exception, traceback)
 
-    def stale_connection():  # type: ignore[no-untyped-def]
+    def stale_connection() -> _StaleUpdateConnection:
         return _StaleUpdateConnection(original_connection())
 
-    memory._connection = stale_connection  # type: ignore[method-assign]
+    monkeypatch.setattr(memory, "_connection", stale_connection)
     with pytest.raises(ConcurrentRunUpdateError, match="changed concurrently"):
         memory.advance_rfq_run(
             run_id="cas-run",

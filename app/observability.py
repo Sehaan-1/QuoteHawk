@@ -16,6 +16,8 @@ from enum import Enum
 from typing import Final
 from uuid import uuid4
 
+from typing_extensions import override
+
 REQUEST_ID_HEADER: Final = "X-Request-ID"
 _REQUEST_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _ALLOWED_ATTRIBUTES: Final = frozenset(
@@ -44,6 +46,7 @@ _configured = False
 class _JsonEventFormatter(logging.Formatter):
     """Write one JSON object per line without serializing arbitrary log records."""
 
+    @override
     def format(self, record: logging.LogRecord) -> str:
         payload = getattr(record, "quotehawk_payload", None)
         if isinstance(payload, dict):

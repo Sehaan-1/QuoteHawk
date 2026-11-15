@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from psycopg_pool import PoolTimeout
+from typing_extensions import override
 
 from app.api.routes import _raise_http_error, configure_quotehawk_api, router
 from app.approval.service import BuyerApprovalPolicy
@@ -27,6 +28,7 @@ class _EventCapture(logging.Handler):
         super().__init__()
         self.payloads: list[dict[str, object]] = []
 
+    @override
     def emit(self, record: logging.LogRecord) -> None:
         payload = getattr(record, "quotehawk_payload", None)
         if isinstance(payload, dict):

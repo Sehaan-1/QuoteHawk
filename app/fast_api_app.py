@@ -28,7 +28,12 @@ from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
 
 load_dotenv()
-allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
+configured_allow_origins = os.getenv("ALLOW_ORIGINS")
+allow_origins = (
+    configured_allow_origins.split(",")
+    if configured_allow_origins is not None and configured_allow_origins != ""
+    else None
+)
 # Local fixture/API paths must work without Application Default Credentials.
 # Cloud telemetry remains an explicit deployment-time opt-in.
 otel_to_cloud = os.getenv("QUOTEHAWK_OTEL_TO_CLOUD", "false").lower() == "true"
