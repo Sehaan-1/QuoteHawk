@@ -67,16 +67,6 @@ known-first-party = ["app"]
 python-version = "3.11"
 [tool.ty.src]
 exclude = [".venv/**"]
-[tool.ty.rules]
-import-not-found = "ignore"
-missing-attribute = "ignore"
-invalid-argument-type = "ignore"
-invalid-assignment = "ignore"
-invalid-explicit-return = "ignore"
-possibly-missing-attribute = "ignore"
-not-subscriptable = "ignore"
-deprecated = "ignore"
-
 [tool.codespell]
 ignore-words-list = "rouge"
 skip = "./uv.lock,./.venv/**,./**/node_modules/**,./web/.next/**,./web/out/**,./web/public/taste/**,./web/package-lock.json,./mobile/package-lock.json"

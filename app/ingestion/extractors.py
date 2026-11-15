@@ -227,7 +227,7 @@ class RuleBasedQuoteExtractor:
                 raise DocumentExtractionError("CSV supplier document has an empty line item")
             normalized_rows.append(normalized_row)
 
-        payload = {
+        payload: dict[str, object] = {
             field: self._single_csv_value(normalized_rows, field, required=True)
             for field in self._CSV_REQUIRED_SCALARS
         }
